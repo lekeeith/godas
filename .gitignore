@@ -1,0 +1,19 @@
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+godans
+*.exe
+*.test
+*.out
+
+# OMC state (not part of the project)
+.omc/
+.claude
