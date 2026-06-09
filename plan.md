@@ -127,9 +127,10 @@
 ### Phase 5: 类型扩展 ✅
 - [x] **Categorical** — 字典编码分类类型 (有序/无序, .cat 访问器)
 
-### Phase 6: SQL 接口
-- [ ] **SQL 引擎** — 集成 DuckDB Go 绑定
-- [ ] **pl.sql()** — 用 SQL 查询 DataFrame
+### Phase 6: SQL 接口 ✅
+- [x] **SQL 引擎** — 内置 SQL 解析器 (SELECT/WHERE/GROUP BY/ORDER BY/LIMIT/JOIN)
+- [x] **数据库连接器** — MySQL/PostgreSQL/SQLite (database/sql)
+- [x] **ReadSQL/WriteSQL** — 从数据库读写 DataFrame
 
 ---
 
@@ -140,7 +141,7 @@
 | Pandas 功能点 | ~85 |
 | Pandas 已完成 | ~85 |
 | Pandas 覆盖率 | **~100%** |
-| Polars 特性 | Phase 1-5 完成 |
-| 测试数 | **261** |
-| Go 文件 | **56** |
-| Commit | **29** |
+| Polars 特性 | Phase 1-6 全部完成 |
+| 测试数 | **277** |
+| Go 文件 | **59** |
+| Commit | **32** |
