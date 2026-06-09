@@ -186,7 +186,7 @@ func (df *ArrowDataFrame) Describe() core.DataFrame {
 }
 
 func (df *ArrowDataFrame) WithColumn(name string, s core.Series) core.DataFrame {
-	arr := s.(*ArrowSeries)
+	arr := s.(*ArrowSeries).SetName(name).(*ArrowSeries)
 	if idx, ok := df.colMap[name]; ok {
 		// Replace
 		newCols := make([]*ArrowSeries, len(df.columns))
