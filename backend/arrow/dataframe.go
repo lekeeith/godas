@@ -419,3 +419,68 @@ func (df *ArrowDataFrame) ToCSV() string {
 	}
 	return b.String()
 }
+
+// GroupByTransform applies a function to each group and returns a flattened result.
+func (df *ArrowDataFrame) GroupByTransform(groupCols []string, targetCol string, fn func([]float64) []float64) core.DataFrame {
+	groups := df.GroupByGroups(groupCols)
+	target := df.Col(targetCol).(*ArrowSeries)
+	result := make([]float64, df.Len())
+
+	for _, indices := range groups {
+		vals := make([]float64, len(indices))
+		for i, idx := range indices {
+			if target.NotNull(idx) {
+				vals[i] = target.Float(idx)
+			}
+		}
+		transformed := fn(vals)
+		for i, idx := range indices {
+			if i < len(transformed) {
+				result[idx] = transformed[i]
+			}
+		}
+	}
+
+	alloc := memory.NewGoAllocator()
+	bldr := array.NewFloat64Builder(alloc)
+	bldr.Resize(df.Len())
+	for _, v := range result {
+		bldr.Append(v)
+	}
+
+	series := make([]*ArrowSeries, len(df.columns))
+	copy(series, df.columns)
+	series = append(series, NewArrowSeries(targetCol+"_transformed", bldr.NewArray(), df.Index()))
+	return NewDataFrame(series...)
+}
+
+// GroupByFilter keeps only groups where the predicate returns true.
+func (df *ArrowDataFrame) GroupByFilter(groupCols []string, predicate func(core.DataFrame) bool) core.DataFrame {
+	groups := df.GroupByGroups(groupCols)
+	keep := make([]int, 0)
+	for _, indices := range groups {
+		sub := df.Take(indices)
+		if predicate(sub) {
+			keep = append(keep, indices...)
+		}
+	}
+	return df.Take(keep)
+}
+
+// GroupByApply applies a function to each group and concatenates the results.
+func (df *ArrowDataFrame) GroupByApply(groupCols []string, fn func(core.DataFrame) core.DataFrame) core.DataFrame {
+	groups := df.GroupByGroups(groupCols)
+	results := make([]core.DataFrame, 0, len(groups))
+	for _, indices := range groups {
+		sub := df.Take(indices)
+		results = append(results, fn(sub))
+	}
+	if len(results) == 0 {
+		return NewDataFrame()
+	}
+	dfs := make([]*ArrowDataFrame, len(results))
+	for i, r := range results {
+		dfs[i] = r.(*ArrowDataFrame)
+	}
+	return Concat(dfs, ConcatRows)
+}
