@@ -9,22 +9,22 @@
 - [x] DType — bool/int8-64/uint8-64/float32/64/string/timestamp/duration/category
 - [x] SeriesBuilder — 增量构建
 
-### I/O (4/5)
+### I/O (5/5)
 - [x] CSV — ReadCSV/ReadCSVFile/WriteCSV/WriteCSVFile + 类型推断
 - [x] JSON — ReadJSON/WriteJSON + NDJSON
 - [x] Parquet — ReadParquetFile/WriteParquetFile
-- [ ] Excel — read_excel/to_excel
+- [x] Excel — ReadExcelFile/WriteExcelFile (excelize)
 
-### 选择索引 (7/8)
+### 选择索引 (8/8)
 - [x] Col/SelectCols/DropCols — 按列名访问
 - [x] Slice/Take — 按位置访问
 - [x] Filter — 布尔索引
 - [x] IsIn — 值匹配过滤
 - [x] BetweenTime — 时间范围过滤
 - [x] Query — 字符串表达式筛选
-- [ ] .xs() — 跨层选取 (MultiIndex)
+- [x] xs() — 跨层选取 (MultiIndex)
 
-### 数据清洗 (9/10)
+### 数据清洗 (10/10)
 - [x] IsNull/NotNull/NullCount
 - [x] DropNA
 - [x] FillNA + FillNAMethod (ffill/bfill/interpolate)
@@ -33,7 +33,7 @@
 - [x] AsType/ToNumeric
 - [x] ConvertDtypes — 自动推断最佳类型
 - [x] Clip — 异常值截断
-- [ ] Where/Mask — 条件替换
+- [x] Where/Mask — 条件替换
 
 ### 转换 (10/10)
 - [x] Apply (Series.Apply, DataFrame.ApplyCols/ApplyRows)
@@ -133,7 +133,7 @@
 - [ ] **where / mask** — 条件替换 (`df.Where(cond, other)` / `df.Mask(cond, other)`)
 
 ### 🟡 高级特性
-- [ ] **MultiIndex** — 多级层次化索引 (行/列均可多级)
+- [x] **MultiIndex** — 多级层次化索引 (行/列均可多级)
 - [ ] **Categorical** — 分类类型 (有序/无序, `.cat` 访问器)
 - [ ] **Sparse** — 稀疏数据结构 (节省内存)
 - [ ] **ExtensionArray** — 自定义数据类型扩展接口
@@ -149,8 +149,8 @@
 | 指标 | 值 |
 |------|-----|
 | 总功能点 | ~85 |
-| 已完成 | ~81 |
-| 覆盖率 | **95%** |
-| 测试数 | **180** |
-| Go 文件 | **42** |
-| Commit | **16** |
+| 已完成 | ~84 |
+| 覆盖率 | **~99%** |
+| 测试数 | **197** |
+| Go 文件 | **48** |
+| Commit | **21** |
