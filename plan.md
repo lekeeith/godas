@@ -119,21 +119,38 @@
 
 ---
 
-## 未完成 ❌
+## ⚠️ 未完成 — 待实现清单
 
-### I/O
-- [ ] **Excel** — read_excel/to_excel (需要 excelize 依赖)
+> 当前覆盖率 **~95%** (81/85 功能点)。以下为剩余项。
 
-### 选择索引
-- [ ] **xs()** — MultiIndex 跨层选取
+### 🔴 I/O
+- [ ] **Excel** — `read_excel` / `to_excel` (需引入 `github.com/xuri/excelize/v2`)
 
-### 数据清洗
-- [ ] **where/mask** — 条件替换
+### 🔴 选择索引
+- [ ] **xs()** — MultiIndex 跨层选取 (依赖 MultiIndex 实现)
 
-### 高级
-- [ ] **MultiIndex** — 多级层次化索引
-- [ ] **Categorical** — 分类类型
-- [ ] **Sparse** — 稀疏数据
-- [ ] **ExtensionArray** — 自定义类型扩展
-- [ ] **.style** — 样式渲染
-- [ ] **.plot()** — 可视化集成 (gonum/plot)
+### 🔴 数据清洗
+- [ ] **where / mask** — 条件替换 (`df.Where(cond, other)` / `df.Mask(cond, other)`)
+
+### 🟡 高级特性
+- [ ] **MultiIndex** — 多级层次化索引 (行/列均可多级)
+- [ ] **Categorical** — 分类类型 (有序/无序, `.cat` 访问器)
+- [ ] **Sparse** — 稀疏数据结构 (节省内存)
+- [ ] **ExtensionArray** — 自定义数据类型扩展接口
+
+### 🟢 可视化 & 渲染
+- [ ] **.plot()** — 可视化集成 (需引入 `gonum.org/v1/plot`)
+- [ ] **.style** — DataFrame 样式渲染 (HTML 输出)
+
+---
+
+### 统计
+
+| 指标 | 值 |
+|------|-----|
+| 总功能点 | ~85 |
+| 已完成 | ~81 |
+| 覆盖率 | **95%** |
+| 测试数 | **180** |
+| Go 文件 | **42** |
+| Commit | **16** |
