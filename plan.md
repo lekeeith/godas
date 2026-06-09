@@ -19,19 +19,19 @@
 
 ## 高优先级 🔴
 
-- [ ] **concat** — 纵向/横向拼接 DataFrame
-- [ ] **value_counts** — 值计数 (Series.value_counts)
-- [ ] **isin** — 值匹配过滤 (Series.isin, DataFrame.isin)
-- [ ] **duplicated / drop_duplicates** — 去重
-- [ ] **interpolate / ffill / bfill** — 缺失值插补 (线性/前向/后向)
-- [ ] **astype** — 类型转换 (int→float, string→int 等)
-- [ ] **to_numeric / to_datetime** — 类型解析
-- [ ] **.str 访问器** — 字符串处理 (contains/replace/split/strip/startswith/endswith/upper/lower/len/count/extract)
-- [ ] **nlargest / nsmallest** — Top N
-- [ ] **quantile** — 分位数
-- [ ] **rank** — 排名 (min/dense/first/average)
-- [ ] **corr / cov** — 相关性/协方差矩阵
-- [ ] **rolling / expanding / ewm** — 滚动窗口 (mean/sum/std/min/max/apply)
+- [x] **concat** — 纵向/横向拼接 DataFrame
+- [x] **value_counts** — 值计数 (Series.value_counts)
+- [x] **isin** — 值匹配过滤 (Series.isin, DataFrame.isin)
+- [x] **duplicated / drop_duplicates** — 去重
+- [x] **interpolate / ffill / bfill** — 缺失值插补 (线性/前向/后向)
+- [x] **astype** — 类型转换 (int→float, string→int 等)
+- [x] **to_numeric / to_datetime** — 类型解析
+- [x] **.str 访问器** — 字符串处理 (contains/replace/split/strip/startswith/endswith/upper/lower/len/count/extract)
+- [x] **nlargest / nsmallest** — Top N
+- [x] **quantile** — 分位数
+- [x] **rank** — 排名 (min/dense/first/average)
+- [x] **corr / cov** — 相关性/协方差矩阵
+- [x] **rolling / expanding / ewm** — 滚动窗口 (mean/sum/std/min/max/apply)
 
 ## 中优先级 🟡
 
