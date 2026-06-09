@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/godans/godans/core"
+	"github.com/lekeeith/godas/core"
 )
 
 func TestAdd(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 
 	"github.com/apache/arrow/go/v18/arrow/array"
 	"github.com/apache/arrow/go/v18/arrow/memory"
-	"github.com/godans/godans/core"
+	"github.com/lekeeith/godas/core"
 )
 
 // StringAccessor provides string operations on a Series.

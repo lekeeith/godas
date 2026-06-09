@@ -1,4 +1,4 @@
-module github.com/godans/godans
+module github.com/lekeeith/godas
 
 go 1.24.9
 

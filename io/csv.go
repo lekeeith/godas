@@ -9,8 +9,8 @@ import (
 
 	"github.com/apache/arrow/go/v18/arrow/array"
 	"github.com/apache/arrow/go/v18/arrow/memory"
-	"github.com/godans/godans/backend/arrow"
-	"github.com/godans/godans/core"
+	"github.com/lekeeith/godas/backend/arrow"
+	"github.com/lekeeith/godas/core"
 )
 
 // ReadCSV reads a CSV string into a DataFrame with automatic type inference.

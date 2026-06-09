@@ -8,7 +8,7 @@ import (
 
 	"github.com/apache/arrow/go/v18/arrow/array"
 	"github.com/apache/arrow/go/v18/arrow/memory"
-	"github.com/godans/godans/core"
+	"github.com/lekeeith/godas/core"
 )
 
 // computeStats returns count, mean, std, min, q25, q50, q75, max for sorted or unsorted data.

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/godans/godans/core"
+	"github.com/lekeeith/godas/core"
 )
 
 func TestReadJSON(t *testing.T) {

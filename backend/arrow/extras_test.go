@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/godans/godans/core"
+	"github.com/lekeeith/godas/core"
 )
 
 // --- clip ---

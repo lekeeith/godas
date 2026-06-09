@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/godans/godans/core"
+	"github.com/lekeeith/godas/core"
 )
 
 func TestTAAddDuration(t *testing.T) {
