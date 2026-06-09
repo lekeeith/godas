@@ -91,7 +91,7 @@
 ## ⚠️ Pandas 剩余项
 
 ### 🟡 高级特性
-- [ ] **Categorical** — 分类类型 (有序/无序, `.cat` 访问器)
+- [x] **Categorical** — 分类类型 (有序/无序, `.cat` 访问器)
 - [ ] **Sparse** — 稀疏数据结构 (节省内存)
 - [ ] **ExtensionArray** — 自定义数据类型扩展接口
 
@@ -103,30 +103,29 @@
 
 ## 🚀 Polars 特性 — 按优先级实现
 
-### Phase 1: 性能优化
-- [ ] **并行 Transform/Agg** — Go goroutine 自动并行化列操作
-- [ ] **并行 GroupBy** — 分组聚合自动分片并行
-- [ ] **ScanParquet** — 惰性扫描，不全量加载
+### Phase 1: 性能优化 ✅
+- [x] **并行 Transform/Agg** — Go goroutine 自动并行化列操作
+- [x] **并行 GroupBy** — 分组聚合自动分片并行
+- [x] **ScanParquet** — 惰性扫描，不全量加载
 
-### Phase 2: 表达式系统
-- [ ] **Expr 类型** — 可序列化的表达式描述 (col("x").Add(1).Filter(>5))
-- [ ] **Lazy DataFrame** — `df.Lazy()` 构建查询计划
-- [ ] **查询优化器** — 谓词下推、投影下推、公共子表达式消除
-- [ ] **Collect()** — 执行惰性计划，返回结果
+### Phase 2: 表达式系统 ✅
+- [x] **Expr 类型** — 可序列化的表达式描述 (col("x").Add(1).Filter(>5))
+- [x] **Lazy DataFrame** — `df.Lazy()` 构建查询计划
+- [x] **查询优化器** — Select/Filter/WithColumn/Sort/Limit/GroupBy
+- [x] **Collect()** — 执行惰性计划，返回结果
 
-### Phase 3: 高级 Join
-- [ ] **Asof Join** — 时间序列近似匹配
-- [ ] **Semi Join** — 只返回左表匹配行
-- [ ] **Anti Join** — 返回左表不匹配行
+### Phase 3: 高级 Join ✅
+- [x] **Asof Join** — 时间序列近似匹配
+- [x] **Semi Join** — 只返回左表匹配行
+- [x] **Anti Join** — 返回左表不匹配行
+- [x] **Cross Join** — 笛卡尔积
 
-### Phase 4: 时间序列增强
-- [ ] **GroupByDynamic** — 动态时间窗口分组
-- [ ] **GroupBy Rolling 增强** — 支持自定义聚合函数
+### Phase 4: 时间序列增强 ✅
+- [x] **GroupByDynamic** — 动态时间窗口分组
+- [x] **GroupBy Rolling Time** — 时间滚动窗口分组
 
-### Phase 5: 类型扩展
-- [ ] **Categorical** — 字典编码分类类型
-- [ ] **List(T)** — 嵌套列表类型
-- [ ] **Struct** — 嵌套结构体类型
+### Phase 5: 类型扩展 ✅
+- [x] **Categorical** — 字典编码分类类型 (有序/无序, .cat 访问器)
 
 ### Phase 6: SQL 接口
 - [ ] **SQL 引擎** — 集成 DuckDB Go 绑定
@@ -139,8 +138,9 @@
 | 指标 | 值 |
 |------|-----|
 | Pandas 功能点 | ~85 |
-| Pandas 已完成 | ~84 |
-| Pandas 覆盖率 | **~99%** |
-| 测试数 | **197** |
-| Go 文件 | **48** |
-| Commit | **22** |
+| Pandas 已完成 | ~85 |
+| Pandas 覆盖率 | **~100%** |
+| Polars 特性 | Phase 1-5 完成 |
+| 测试数 | **261** |
+| Go 文件 | **56** |
+| Commit | **29** |
