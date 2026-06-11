@@ -72,9 +72,10 @@ func (lf *LazyFrame) Limit(n int) *LazyFrame {
 
 // Collect executes the lazy plan and returns a DataFrame.
 func (lf *LazyFrame) Collect() *ArrowDataFrame {
+	ops := lf.optimize()
 	df := lf.source
 
-	for _, op := range lf.ops {
+	for _, op := range ops {
 		switch op.opType {
 		case "select":
 			series := make([]*ArrowSeries, len(op.exprs))
@@ -119,6 +120,41 @@ func (lf *LazyFrame) Collect() *ArrowDataFrame {
 	}
 
 	return df
+}
+
+// optimize applies query optimizations to the operation list.
+func (lf *LazyFrame) optimize() []lazyOp {
+	ops := make([]lazyOp, len(lf.ops))
+	copy(ops, lf.ops)
+
+	// Pass 1: Filter fusion — merge consecutive filters into one AND expression
+	ops = fuseFilters(ops)
+
+	return ops
+}
+
+// fuseFilters merges consecutive filter operations into a single AND expression.
+func fuseFilters(ops []lazyOp) []lazyOp {
+	if len(ops) <= 1 {
+		return ops
+	}
+	result := make([]lazyOp, 0, len(ops))
+	for i := 0; i < len(ops); i++ {
+		if ops[i].opType == "filter" {
+			// Look ahead for consecutive filters
+			combined := ops[i].mask
+			j := i + 1
+			for j < len(ops) && ops[j].opType == "filter" {
+				combined = combined.And(ops[j].mask)
+				j++
+			}
+			result = append(result, lazyOp{opType: "filter", mask: combined})
+			i = j - 1 // skip merged filters
+		} else {
+			result = append(result, ops[i])
+		}
+	}
+	return result
 }
 
 // copy creates a shallow copy of the LazyFrame.

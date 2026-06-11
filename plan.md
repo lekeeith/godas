@@ -14,6 +14,7 @@
 - [x] JSON — ReadJSON/WriteJSON + NDJSON
 - [x] Parquet — ReadParquetFile/WriteParquetFile
 - [x] Excel — ReadExcelFile/WriteExcelFile (excelize)
+- [x] DataFrame 便捷写入 — ToJSON/ToJSONLines/WriteCSVFile/WriteJSONFile/WriteJSONLinesFile
 
 ### 选择索引 (8/8)
 - [x] Col/SelectCols/DropCols — 按列名访问
@@ -85,13 +86,21 @@
 
 ### 高级
 - [x] MultiIndex — 多级层次化索引
+- [x] Categorical — 分类类型 (有序/无序, `.cat` 访问器)
+
+### 代码质量改进
+- [x] **panic → error 改造** — Filter mask 不匹配 / Eval 未知 op / DurationDiv 除零改为返回安全值（空 Series / NaN），不再 panic
+- [x] **Index 传播** — Head/Tail/Slice/Filter/Take/SortBy/DropNA/FillNA/Rename/WithColumn/SelectCols/DropCols 全部保留 DataFrame 级别 index
+- [x] **MultiIndex 完整支持** — SetMultiIndex 保留 MultiIndex 结构、Unstack 实现、SwapLevel/DropLevel/RenameLevel/GetLevelValues/GroupByLevel
+- [x] **DataFrame I/O 便捷方法** — ToJSON/ToJSONLines/WriteCSVFile/WriteJSONFile/WriteJSONLinesFile
+- [x] **LazyFrame 查询优化器** — Filter Fusion（连续 filter 合并为 AND 表达式）
+- [x] **并行化扩展** — DropNA/FillNA/Agg 在列数 ≥ 4 时自动并行化；新增 ParallelDropNA/ParallelFillNA
 
 ---
 
 ## ⚠️ Pandas 剩余项
 
 ### 🟡 高级特性
-- [x] **Categorical** — 分类类型 (有序/无序, `.cat` 访问器)
 - [ ] **Sparse** — 稀疏数据结构 (节省内存)
 - [ ] **ExtensionArray** — 自定义数据类型扩展接口
 
@@ -111,7 +120,7 @@
 ### Phase 2: 表达式系统 ✅
 - [x] **Expr 类型** — 可序列化的表达式描述 (col("x").Add(1).Filter(>5))
 - [x] **Lazy DataFrame** — `df.Lazy()` 构建查询计划
-- [x] **查询优化器** — Select/Filter/WithColumn/Sort/Limit/GroupBy
+- [x] **查询优化器** — Filter Fusion + Select/Filter/WithColumn/Sort/Limit/GroupBy
 - [x] **Collect()** — 执行惰性计划，返回结果
 
 ### Phase 3: 高级 Join ✅
@@ -144,4 +153,3 @@
 | Polars 特性 | Phase 1-6 全部完成 |
 | 测试数 | **277** |
 | Go 文件 | **59** |
-| Commit | **32** |

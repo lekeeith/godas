@@ -1,7 +1,9 @@
 package arrow
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/apache/arrow/go/v18/arrow/array"
@@ -11,9 +13,10 @@ import (
 
 // ArrowDataFrame implements core.DataFrame backed by Arrow arrays.
 type ArrowDataFrame struct {
-	columns []*ArrowSeries
-	colMap  map[string]int // name -> index
-	index   core.Index
+	columns    []*ArrowSeries
+	colMap     map[string]int // name -> index
+	index      core.Index
+	multiIndex *MultiIndex // non-nil when SetMultiIndex was used
 }
 
 // NewDataFrame creates a DataFrame from a slice of ArrowSeries.
@@ -73,6 +76,30 @@ func (df *ArrowDataFrame) colIndex(name string) int {
 	return idx
 }
 
+// newDataFrameWithIndex creates a DataFrame from series with a specific index.
+// Used internally to preserve the DataFrame-level index through operations.
+func newDataFrameWithIndex(series []*ArrowSeries, idx core.Index) *ArrowDataFrame {
+	df := NewDataFrame(series...)
+	if idx != nil {
+		df.index = idx
+	}
+	return df
+}
+
+// reindex builds a new index from the DataFrame's index using the given positions.
+func (df *ArrowDataFrame) reindex(positions []int) core.Index {
+	switch df.index.(type) {
+	case *core.RangeIndex:
+		return core.NewRangeIndex(0, len(positions))
+	default:
+		strs := make([]string, len(positions))
+		for i, p := range positions {
+			strs[i] = df.index.Get(p)
+		}
+		return core.NewStringIndex(strs)
+	}
+}
+
 func (df *ArrowDataFrame) Col(name string) core.Series {
 	return df.columns[df.colIndex(name)]
 }
@@ -82,7 +109,7 @@ func (df *ArrowDataFrame) SelectCols(names []string) core.DataFrame {
 	for i, n := range names {
 		series[i] = df.columns[df.colIndex(n)]
 	}
-	return NewDataFrame(series...)
+	return newDataFrameWithIndex(series, df.index)
 }
 
 func (df *ArrowDataFrame) DropCols(names []string) core.DataFrame {
@@ -97,25 +124,33 @@ func (df *ArrowDataFrame) DropCols(names []string) core.DataFrame {
 		}
 	}
 	if len(series) == 0 {
-		return &ArrowDataFrame{colMap: map[string]int{}}
+		return &ArrowDataFrame{colMap: map[string]int{}, index: df.index}
 	}
-	return NewDataFrame(series...)
+	return newDataFrameWithIndex(series, df.index)
 }
 
 func (df *ArrowDataFrame) Head(n int) core.DataFrame {
+	if n > df.Len() {
+		n = df.Len()
+	}
 	series := make([]*ArrowSeries, len(df.columns))
 	for i, c := range df.columns {
 		series[i] = c.Head(n).(*ArrowSeries)
 	}
-	return NewDataFrame(series...)
+	return newDataFrameWithIndex(series, df.index.Slice(0, n))
 }
 
 func (df *ArrowDataFrame) Tail(n int) core.DataFrame {
+	rows := df.Len()
+	if n > rows {
+		n = rows
+	}
+	start := rows - n
 	series := make([]*ArrowSeries, len(df.columns))
 	for i, c := range df.columns {
 		series[i] = c.Tail(n).(*ArrowSeries)
 	}
-	return NewDataFrame(series...)
+	return newDataFrameWithIndex(series, df.index.Slice(start, rows))
 }
 
 func (df *ArrowDataFrame) Slice(start, end int) core.DataFrame {
@@ -123,15 +158,23 @@ func (df *ArrowDataFrame) Slice(start, end int) core.DataFrame {
 	for i, c := range df.columns {
 		series[i] = c.Slice(start, end).(*ArrowSeries)
 	}
-	return NewDataFrame(series...)
+	return newDataFrameWithIndex(series, df.index.Slice(start, end))
 }
 
 func (df *ArrowDataFrame) Filter(mask []bool) core.DataFrame {
+	// Build filtered index
+	var indices []int
+	for i, m := range mask {
+		if m {
+			indices = append(indices, i)
+		}
+	}
 	series := make([]*ArrowSeries, len(df.columns))
 	for i, c := range df.columns {
 		series[i] = c.Filter(mask).(*ArrowSeries)
 	}
-	return NewDataFrame(series...)
+	newIdx := df.reindex(indices)
+	return newDataFrameWithIndex(series, newIdx)
 }
 
 func (df *ArrowDataFrame) Take(indices []int) core.DataFrame {
@@ -139,7 +182,8 @@ func (df *ArrowDataFrame) Take(indices []int) core.DataFrame {
 	for i, c := range df.columns {
 		series[i] = c.Take(indices).(*ArrowSeries)
 	}
-	return NewDataFrame(series...)
+	newIdx := df.reindex(indices)
+	return newDataFrameWithIndex(series, newIdx)
 }
 
 func (df *ArrowDataFrame) Info() string {
@@ -192,16 +236,20 @@ func (df *ArrowDataFrame) WithColumn(name string, s core.Series) core.DataFrame 
 		newCols := make([]*ArrowSeries, len(df.columns))
 		copy(newCols, df.columns)
 		newCols[idx] = arr
-		return NewDataFrame(newCols...)
+		return newDataFrameWithIndex(newCols, df.index)
 	}
 	// Append
 	newCols := make([]*ArrowSeries, len(df.columns)+1)
 	copy(newCols, df.columns)
 	newCols[len(df.columns)] = arr
-	return NewDataFrame(newCols...)
+	return newDataFrameWithIndex(newCols, df.index)
 }
 
 func (df *ArrowDataFrame) DropNA() core.DataFrame {
+	// Auto-parallelize for many columns
+	if len(df.columns) >= autoParallelMinCols {
+		return df.ParallelDropNA()
+	}
 	rows, _ := df.Shape()
 	mask := make([]bool, rows)
 	for i := 0; i < rows; i++ {
@@ -217,6 +265,10 @@ func (df *ArrowDataFrame) DropNA() core.DataFrame {
 }
 
 func (df *ArrowDataFrame) FillNA(value interface{}) core.DataFrame {
+	// Auto-parallelize for many columns
+	if len(df.columns) >= autoParallelMinCols {
+		return df.ParallelFillNA(value)
+	}
 	alloc := memory.NewGoAllocator()
 	series := make([]*ArrowSeries, len(df.columns))
 	for j, c := range df.columns {
@@ -232,7 +284,7 @@ func (df *ArrowDataFrame) FillNA(value interface{}) core.DataFrame {
 		series[j] = NewArrowSeries(c.Name(), bldr.NewArray(), c.Index())
 		bldr.Release()
 	}
-	return NewDataFrame(series...)
+	return newDataFrameWithIndex(series, df.index)
 }
 
 func (df *ArrowDataFrame) Rename(mapping map[string]string) core.DataFrame {
@@ -244,7 +296,7 @@ func (df *ArrowDataFrame) Rename(mapping map[string]string) core.DataFrame {
 			series[i] = c
 		}
 	}
-	return NewDataFrame(series...)
+	return newDataFrameWithIndex(series, df.index)
 }
 
 func (df *ArrowDataFrame) SetIndex(name string) core.DataFrame {
@@ -340,6 +392,10 @@ func (df *ArrowDataFrame) GroupByGroups(names []string) map[string][]int {
 }
 
 func (df *ArrowDataFrame) Agg(groupCols []string, aggs map[string]core.AggFunc) core.DataFrame {
+	// Auto-parallelize for many aggregation columns
+	if len(aggs) >= autoParallelMinCols {
+		return df.ParallelAgg(groupCols, aggs)
+	}
 	groups := df.GroupByGroups(groupCols)
 	var resultSeries []*ArrowSeries
 
@@ -420,7 +476,98 @@ func (df *ArrowDataFrame) ToCSV() string {
 	return b.String()
 }
 
-// GroupByTransform applies a function to each group and returns a flattened result.
+// ToJSON serializes the DataFrame to a JSON array of objects string.
+func (df *ArrowDataFrame) ToJSON() (string, error) {
+	rows, _ := df.Shape()
+	colNames := df.Columns()
+	result := make([]map[string]interface{}, rows)
+
+	for i := 0; i < rows; i++ {
+		row := make(map[string]interface{}, len(colNames))
+		for _, name := range colNames {
+			s := df.Col(name)
+			if s.IsNull(i) {
+				row[name] = nil
+				continue
+			}
+			switch s.Dtype() {
+			case core.BOOL:
+				row[name] = s.Bool(i)
+			case core.FLOAT32, core.FLOAT64:
+				row[name] = s.Float(i)
+			case core.STRING:
+				row[name] = s.String(i)
+			default:
+				row[name] = s.Int(i)
+			}
+		}
+		result[i] = row
+	}
+
+	b, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal json: %w", err)
+	}
+	return string(b), nil
+}
+
+// ToJSONLines serializes the DataFrame to NDJSON format.
+func (df *ArrowDataFrame) ToJSONLines() (string, error) {
+	rows, _ := df.Shape()
+	colNames := df.Columns()
+	var b strings.Builder
+
+	for i := 0; i < rows; i++ {
+		row := make(map[string]interface{}, len(colNames))
+		for _, name := range colNames {
+			s := df.Col(name)
+			if s.IsNull(i) {
+				row[name] = nil
+				continue
+			}
+			switch s.Dtype() {
+			case core.BOOL:
+				row[name] = s.Bool(i)
+			case core.FLOAT32, core.FLOAT64:
+				row[name] = s.Float(i)
+			case core.STRING:
+				row[name] = s.String(i)
+			default:
+				row[name] = s.Int(i)
+			}
+		}
+		line, err := json.Marshal(row)
+		if err != nil {
+			return "", fmt.Errorf("marshal json line: %w", err)
+		}
+		b.Write(line)
+		b.WriteByte('\n')
+	}
+	return b.String(), nil
+}
+
+// WriteCSVFile writes the DataFrame to a CSV file.
+func (df *ArrowDataFrame) WriteCSVFile(path string) error {
+	return os.WriteFile(path, []byte(df.ToCSV()), 0644)
+}
+
+// WriteJSONFile writes the DataFrame to a JSON file.
+func (df *ArrowDataFrame) WriteJSONFile(path string) error {
+	s, err := df.ToJSON()
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(s), 0644)
+}
+
+// WriteJSONLinesFile writes the DataFrame to an NDJSON file.
+func (df *ArrowDataFrame) WriteJSONLinesFile(path string) error {
+	s, err := df.ToJSONLines()
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(s), 0644)
+}
 func (df *ArrowDataFrame) GroupByTransform(groupCols []string, targetCol string, fn func([]float64) []float64) core.DataFrame {
 	groups := df.GroupByGroups(groupCols)
 	target := df.Col(targetCol).(*ArrowSeries)

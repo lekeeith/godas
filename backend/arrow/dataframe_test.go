@@ -249,3 +249,69 @@ func NewStringSeriesWithNulls(name string, data []string, valid []bool) *ArrowSe
 	}
 	return NewArrowSeries(name, b.NewArray(), nil)
 }
+
+func TestDataFrameIndexPropagation(t *testing.T) {
+	// Create DataFrame with string index
+	name := NewStringSeries("name", []string{"alice", "bob", "charlie", "dave"}, nil)
+	age := NewInt64Series("age", []int64{25, 30, 35, 40}, nil)
+	df := NewDataFrame(name, age)
+	idx := core.NewStringIndex([]string{"a", "b", "c", "d"})
+	df.index = idx
+
+	// Head should preserve index
+	head := df.Head(2).(*ArrowDataFrame)
+	if head.index.Get(0) != "a" || head.index.Get(1) != "b" {
+		t.Errorf("Head index = [%s, %s], want [a, b]", head.index.Get(0), head.index.Get(1))
+	}
+
+	// Tail should preserve index
+	tail := df.Tail(2).(*ArrowDataFrame)
+	if tail.index.Get(0) != "c" || tail.index.Get(1) != "d" {
+		t.Errorf("Tail index = [%s, %s], want [c, d]", tail.index.Get(0), tail.index.Get(1))
+	}
+
+	// Slice should preserve index
+	sliced := df.Slice(1, 3).(*ArrowDataFrame)
+	if sliced.index.Get(0) != "b" || sliced.index.Get(1) != "c" {
+		t.Errorf("Slice index = [%s, %s], want [b, c]", sliced.index.Get(0), sliced.index.Get(1))
+	}
+
+	// Filter should preserve index
+	filtered := df.Filter([]bool{true, false, true, false}).(*ArrowDataFrame)
+	if filtered.index.Get(0) != "a" || filtered.index.Get(1) != "c" {
+		t.Errorf("Filter index = [%s, %s], want [a, c]", filtered.index.Get(0), filtered.index.Get(1))
+	}
+
+	// Take should preserve index
+	taken := df.Take([]int{3, 1}).(*ArrowDataFrame)
+	if taken.index.Get(0) != "d" || taken.index.Get(1) != "b" {
+		t.Errorf("Take index = [%s, %s], want [d, b]", taken.index.Get(0), taken.index.Get(1))
+	}
+
+	// SortBy should preserve index (via Take)
+	sorted := df.SortBy([]string{"age"}, []bool{false}).(*ArrowDataFrame)
+	if sorted.index.Get(0) != "d" {
+		t.Errorf("SortBy first index = %s, want d", sorted.index.Get(0))
+	}
+
+	// WithColumn should preserve index
+	withCol := df.WithColumn("extra", NewInt64Series("extra", []int64{1, 2, 3, 4}, nil)).(*ArrowDataFrame)
+	if withCol.index.Get(0) != "a" {
+		t.Errorf("WithColumn index = %s, want a", withCol.index.Get(0))
+	}
+
+	// FillNA should preserve index
+	b := array.NewFloat64Builder(memory.NewGoAllocator())
+	b.Resize(4)
+	b.Append(1.0)
+	b.AppendNull()
+	b.Append(3.0)
+	b.AppendNull()
+	df2 := NewDataFrame(NewArrowSeries("x", b.NewArray(), nil))
+	b.Release()
+	df2.index = core.NewStringIndex([]string{"w", "x", "y", "z"})
+	filled := df2.FillNA(99.0).(*ArrowDataFrame)
+	if filled.index.Get(1) != "x" || filled.index.Get(3) != "z" {
+		t.Errorf("FillNA index = [%s, %s], want [x, z]", filled.index.Get(1), filled.index.Get(3))
+	}
+}

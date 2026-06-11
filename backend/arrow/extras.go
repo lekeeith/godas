@@ -385,8 +385,91 @@ func (df *ArrowDataFrame) Stack() core.DataFrame {
 
 // Unstack pivots the innermost index level into columns.
 func (df *ArrowDataFrame) Unstack(level int) core.DataFrame {
-	// Simplified: unstack column "level" from index
-	return df // TODO: full MultiIndex support
+	if df.multiIndex == nil || level < 0 || level >= df.multiIndex.NLevels() {
+		return df
+	}
+
+	// Get unique values at the unstacked level
+	levelVals := df.multiIndex.GetLevelValues(level)
+	uniqueVals := make([]string, 0)
+	seen := make(map[string]bool)
+	for _, v := range levelVals {
+		if !seen[v] {
+			seen[v] = true
+			uniqueVals = append(uniqueVals, v)
+		}
+	}
+
+	// Build the remaining index (without the unstacked level)
+	remainingIdx := df.multiIndex.DropLevel(level)
+	remainingVals := remainingIdx.ToIndex()
+	// Find unique remaining index combinations
+	remainingUnique := make([]string, 0)
+	remainingRowMap := make(map[string]int)
+	for i := 0; i < df.Len(); i++ {
+		key := remainingVals.Get(i)
+		if _, ok := remainingRowMap[key]; !ok {
+			remainingRowMap[key] = len(remainingUnique)
+			remainingUnique = append(remainingUnique, key)
+		}
+	}
+
+	// For each data column, create one column per unique level value
+	alloc := memory.NewGoAllocator()
+	var resultSeries []*ArrowSeries
+
+	// Add remaining index columns
+	if remainingIdx.NLevels() > 0 {
+		for lvl := 0; lvl < remainingIdx.NLevels(); lvl++ {
+			lvlName := fmt.Sprintf("level_%d", lvl)
+			if lvl < len(remainingIdx.names) && remainingIdx.names[lvl] != "" {
+				lvlName = remainingIdx.names[lvl]
+			}
+			bldr := array.NewStringBuilder(alloc)
+			bldr.Resize(len(remainingUnique))
+			for _, key := range remainingUnique {
+				bldr.Append(key)
+			}
+			resultSeries = append(resultSeries, NewArrowSeries(lvlName, bldr.NewArray(), nil))
+		}
+	}
+
+	// For each data column, unstack
+	dataCols := df.Columns()
+	if len(dataCols) == 0 {
+		return NewDataFrame(resultSeries...)
+	}
+
+	// Build lookup: (remaining_key, level_val) -> row index
+	rowLookup := make(map[string]int)
+	for i := 0; i < df.Len(); i++ {
+		key := remainingVals.Get(i) + "\x00" + levelVals[i]
+		rowLookup[key] = i
+	}
+
+	for _, colName := range dataCols {
+		s := df.Col(colName).(*ArrowSeries)
+		for _, uv := range uniqueVals {
+			newName := colName + "_" + uv
+			bldr := array.NewFloat64Builder(alloc)
+			bldr.Resize(len(remainingUnique))
+			for _, rk := range remainingUnique {
+				key := rk + "\x00" + uv
+				if rowIdx, ok := rowLookup[key]; ok {
+					if s.IsNull(rowIdx) {
+						bldr.AppendNull()
+					} else {
+						bldr.Append(s.Float(rowIdx))
+					}
+				} else {
+					bldr.AppendNull()
+				}
+			}
+			resultSeries = append(resultSeries, NewArrowSeries(newName, bldr.NewArray(), nil))
+		}
+	}
+
+	return NewDataFrame(resultSeries...)
 }
 
 // --- compare ---

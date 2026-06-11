@@ -199,3 +199,102 @@ func (df *ArrowDataFrame) ParallelFilter(mask []bool, cfg ...ParallelConfig) cor
 func ParallelInfo() string {
 	return fmt.Sprintf("CPUs: %d", runtime.NumCPU())
 }
+
+// ParallelDropNA drops rows with any null in parallel column checks.
+func (df *ArrowDataFrame) ParallelDropNA(cfg ...ParallelConfig) core.DataFrame {
+	c := defaultParallel
+	if len(cfg) > 0 {
+		c = cfg[0]
+	}
+
+	rows, _ := df.Shape()
+	numCols := len(df.columns)
+	workers := c.numWorkers()
+	if workers > numCols {
+		workers = numCols
+	}
+	if workers <= 1 {
+		return df.DropNA()
+	}
+
+	// Each column builds its own null mask in parallel
+	nullMasks := make([][]bool, numCols)
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, workers)
+
+	for j, col := range df.columns {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(idx int, s *ArrowSeries) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			mask := make([]bool, rows)
+			for i := 0; i < rows; i++ {
+				mask[i] = s.IsNull(i)
+			}
+			nullMasks[idx] = mask
+		}(j, col)
+	}
+	wg.Wait()
+
+	// Combine masks: keep row if NO column has null
+	keep := make([]bool, rows)
+	for i := 0; i < rows; i++ {
+		keep[i] = true
+		for j := 0; j < numCols; j++ {
+			if nullMasks[j][i] {
+				keep[i] = false
+				break
+			}
+		}
+	}
+	return df.Filter(keep)
+}
+
+// ParallelFillNA fills nulls in parallel per column.
+func (df *ArrowDataFrame) ParallelFillNA(value interface{}, cfg ...ParallelConfig) core.DataFrame {
+	c := defaultParallel
+	if len(cfg) > 0 {
+		c = cfg[0]
+	}
+
+	numCols := len(df.columns)
+	workers := c.numWorkers()
+	if workers <= 1 || numCols <= 1 {
+		return df.FillNA(value)
+	}
+
+	series := make([]*ArrowSeries, numCols)
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, workers)
+	alloc := memory.NewGoAllocator()
+
+	for j, col := range df.columns {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(idx int, s *ArrowSeries) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			bldr := array.NewBuilder(alloc, s.arr.DataType())
+			bldr.Resize(s.Len())
+			for i := 0; i < s.Len(); i++ {
+				if s.IsNull(i) {
+					appendValue(bldr, s.Dtype(), value)
+				} else {
+					copyValue(bldr, s, i)
+				}
+			}
+			series[idx] = NewArrowSeries(s.Name(), bldr.NewArray(), s.Index())
+			bldr.Release()
+		}(j, col)
+	}
+	wg.Wait()
+
+	return NewDataFrame(series...)
+}
+
+// autoParallelThresholds defines when to auto-enable parallelism.
+const (
+	autoParallelMinCols = 4    // Agg/FillNA/DropNA: parallelize when >= this many columns
+	autoParallelMinRows = 10000 // Filter: parallelize when >= this many rows
+)

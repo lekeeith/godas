@@ -2,6 +2,8 @@ package arrow
 
 import (
 	"testing"
+
+	"github.com/lekeeith/godas/core"
 )
 
 // --- MultiIndex ---
@@ -107,5 +109,94 @@ func TestMultiIndexSlice(t *testing.T) {
 	}
 	if sub.GetLevel(0, 0) != "b" {
 		t.Errorf("Slice[0] = %q", sub.GetLevel(0, 0))
+	}
+}
+
+func TestMultiIndexSwapLevel(t *testing.T) {
+	tuples := [][]string{
+		{"eng", "senior"},
+		{"eng", "junior"},
+		{"sales", "senior"},
+	}
+	mi := NewMultiIndexFromTuples(tuples, []string{"dept", "level"})
+	swapped := mi.SwapLevel(0, 1)
+	if swapped.names[0] != "level" || swapped.names[1] != "dept" {
+		t.Errorf("SwapLevel names = %v", swapped.names)
+	}
+	if swapped.GetLevel(0, 0) != "senior" || swapped.GetLevel(1, 0) != "eng" {
+		t.Errorf("SwapLevel values = %s/%s", swapped.GetLevel(0, 0), swapped.GetLevel(1, 0))
+	}
+}
+
+func TestMultiIndexDropLevel(t *testing.T) {
+	tuples := [][]string{
+		{"eng", "senior"},
+		{"eng", "junior"},
+	}
+	mi := NewMultiIndexFromTuples(tuples, []string{"dept", "level"})
+	dropped := mi.DropLevel(1)
+	if dropped.NLevels() != 1 {
+		t.Fatalf("DropLevel NLevels = %d, want 1", dropped.NLevels())
+	}
+	if dropped.GetLevel(0, 0) != "eng" {
+		t.Errorf("DropLevel[0] = %q, want eng", dropped.GetLevel(0, 0))
+	}
+}
+
+func TestMultiIndexRenameLevel(t *testing.T) {
+	tuples := [][]string{{"a", "1"}}
+	mi := NewMultiIndexFromTuples(tuples, []string{"x", "y"})
+	renamed := mi.RenameLevel(0, "renamed")
+	if renamed.names[0] != "renamed" || renamed.names[1] != "y" {
+		t.Errorf("RenameLevel names = %v", renamed.names)
+	}
+}
+
+func TestMultiIndexGetLevelValues(t *testing.T) {
+	tuples := [][]string{
+		{"eng", "senior"},
+		{"eng", "junior"},
+		{"sales", "senior"},
+	}
+	mi := NewMultiIndexFromTuples(tuples, []string{"dept", "level"})
+	vals := mi.GetLevelValues(0)
+	if len(vals) != 3 {
+		t.Fatalf("GetLevelValues len = %d, want 3", len(vals))
+	}
+	if vals[0] != "eng" || vals[2] != "sales" {
+		t.Errorf("GetLevelValues = %v", vals)
+	}
+}
+
+func TestDataFrameMultiIndexOps(t *testing.T) {
+	df := NewDataFrame(
+		NewStringSeries("dept", []string{"eng", "eng", "sales", "sales"}, nil),
+		NewStringSeries("level", []string{"senior", "junior", "senior", "junior"}, nil),
+		NewFloat64Series("salary", []float64{100, 80, 90, 70}, nil),
+	)
+	mdf := df.SetMultiIndex([]string{"dept", "level"})
+
+	// Test MultiIndex is preserved
+	rdf := mdf
+	if rdf.multiIndex == nil {
+		t.Fatal("multiIndex should be non-nil after SetMultiIndex")
+	}
+
+	// Test Xs uses multiIndex
+	eng := rdf.Xs(0, "eng")
+	if eng.Len() != 2 {
+		t.Fatalf("Xs eng.Len() = %d, want 2", eng.Len())
+	}
+
+	// Test GroupByLevel
+	grouped := rdf.GroupByLevel(0, map[string]core.AggFunc{"salary": core.AggMean})
+	if grouped.Len() != 2 {
+		t.Fatalf("GroupByLevel.Len() = %d, want 2", grouped.Len())
+	}
+
+	// Test Unstack
+	unstacked := rdf.Unstack(0)
+	if unstacked.Len() != 2 { // junior, senior
+		t.Fatalf("Unstack.Len() = %d, want 2", unstacked.Len())
 	}
 }

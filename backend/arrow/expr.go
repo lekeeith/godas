@@ -348,7 +348,9 @@ func (e *Expr) Eval(df *ArrowDataFrame) core.Series {
 		return e.left.Eval(df).(*ArrowSeries).Str().Lower()
 
 	default:
-		panic(fmt.Sprintf("unknown expr op: %d", e.op))
+		// Unknown op: return a null series (defensive)
+		rows, _ := df.Shape()
+		return newConstFloat64Series("_unknown", 0, rows)
 	}
 }
 

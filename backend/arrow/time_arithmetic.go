@@ -2,6 +2,7 @@ package arrow
 
 import (
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/apache/arrow/go/v18/arrow/array"
@@ -134,7 +135,14 @@ func (ta *TimeArithmetic) DurationMul(scalar float64) *ArrowSeries {
 // DurationDiv divides a duration series by a scalar.
 func (ta *TimeArithmetic) DurationDiv(scalar float64) *ArrowSeries {
 	if scalar == 0 {
-		panic("duration division by zero")
+		// Defensive: return NaN series instead of panic
+		alloc := memory.NewGoAllocator()
+		bldr := array.NewFloat64Builder(alloc)
+		bldr.Resize(ta.s.Len())
+		for i := 0; i < ta.s.Len(); i++ {
+			bldr.Append(math.NaN())
+		}
+		return NewArrowSeries(ta.s.Name(), bldr.NewArray(), ta.s.Index())
 	}
 	return ta.DurationMul(1.0 / scalar)
 }

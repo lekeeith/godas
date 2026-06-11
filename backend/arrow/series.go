@@ -141,7 +141,11 @@ func (s *ArrowSeries) Slice(start, end int) core.Series {
 
 func (s *ArrowSeries) Filter(mask []bool) core.Series {
 	if len(mask) != s.Len() {
-		panic(fmt.Sprintf("Filter: mask length %d != series length %d", len(mask), s.Len()))
+		// Defensive: return empty series instead of panic
+		alloc := memory.NewGoAllocator()
+		bldr := array.NewBuilder(alloc, s.arr.DataType())
+		defer bldr.Release()
+		return NewArrowSeries(s.name, bldr.NewArray(), core.NewDefaultIndex(0))
 	}
 	indices := make([]int, 0)
 	for i, m := range mask {

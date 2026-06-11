@@ -146,3 +146,51 @@ func TestLazyEmpty(t *testing.T) {
 		t.Fatalf("Len() = %d, want 3", result.Len())
 	}
 }
+
+func TestLazyFilterFusion(t *testing.T) {
+	df := NewDataFrame(
+		NewStringSeries("name", []string{"alice", "bob", "charlie", "dave"}, nil),
+		NewFloat64Series("age", []float64{25, 30, 35, 28}, nil),
+		NewFloat64Series("score", []float64{88, 92, 76, 95}, nil),
+	)
+	// Two consecutive filters should be fused into one AND
+	result := df.Lazy().
+		Filter(Col("age").Ge(Lit(28.0))).
+		Filter(Col("score").Gt(Lit(80.0))).
+		Collect()
+	// age >= 28 AND score > 80: bob(30,92), dave(28,95) => 2 rows
+	if result.Len() != 2 {
+		t.Fatalf("FilterFusion.Len() = %d, want 2", result.Len())
+	}
+	// Verify the fused plan has only 1 filter op
+	lf := df.Lazy().
+		Filter(Col("age").Ge(Lit(28.0))).
+		Filter(Col("score").Gt(Lit(80.0)))
+	optimized := lf.optimize()
+	filterCount := 0
+	for _, op := range optimized {
+		if op.opType == "filter" {
+			filterCount++
+		}
+	}
+	if filterCount != 1 {
+		t.Errorf("filter count after fusion = %d, want 1", filterCount)
+	}
+}
+
+func TestLazyFilterFusionThree(t *testing.T) {
+	df := NewDataFrame(
+		NewFloat64Series("x", []float64{1, 2, 3, 4, 5}, nil),
+		NewFloat64Series("y", []float64{10, 20, 30, 40, 50}, nil),
+	)
+	// Three consecutive filters should fuse into one
+	result := df.Lazy().
+		Filter(Col("x").Ge(Lit(2.0))).
+		Filter(Col("y").Le(Lit(40.0))).
+		Filter(Col("x").Ne(Lit(3.0))).
+		Collect()
+	// x>=2 AND y<=40 AND x!=3: x=2/y=20, x=4/y=40 => 2 rows
+	if result.Len() != 2 {
+		t.Fatalf("ThreeFilter.Len() = %d, want 2", result.Len())
+	}
+}

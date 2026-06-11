@@ -1,6 +1,7 @@
 package arrow
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -222,10 +223,12 @@ func TestFormatDuration(t *testing.T) {
 
 func TestTADivByZero(t *testing.T) {
 	d := DurationFromNanos("d", []int64{int64(time.Hour)}, nil)
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("expected panic on division by zero")
-		}
-	}()
-	d.TA().DurationDiv(0)
+	result := d.TA().DurationDiv(0)
+	// Division by zero should return NaN values, not panic
+	if result.Len() != 1 {
+		t.Fatalf("expected length 1, got %d", result.Len())
+	}
+	if !math.IsNaN(result.Float(0)) {
+		t.Errorf("expected NaN, got %f", result.Float(0))
+	}
 }
