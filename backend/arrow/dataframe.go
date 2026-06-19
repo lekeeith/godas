@@ -163,16 +163,45 @@ func (df *ArrowDataFrame) Slice(start, end int) core.DataFrame {
 }
 
 func (df *ArrowDataFrame) Filter(mask []bool) core.DataFrame {
-	// Build filtered index
+	// Scan mask once to collect indices
 	var indices []int
 	for i, m := range mask {
 		if m {
 			indices = append(indices, i)
 		}
 	}
+	if len(indices) == 0 {
+		return &ArrowDataFrame{colMap: map[string]int{}, index: core.NewDefaultIndex(0)}
+	}
+
+	// Optimization 1: contiguous indices → zero-copy Slice
+	if start, end, ok := isContiguous(indices); ok {
+		series := make([]*ArrowSeries, len(df.columns))
+		for i, c := range df.columns {
+			series[i] = c.Slice(start, end).(*ArrowSeries)
+		}
+		return newDataFrameWithIndex(series, df.index.Slice(start, end))
+	}
+
+	// Optimization 2: Arrow compute SIMD filter for each column
 	series := make([]*ArrowSeries, len(df.columns))
+	allCompute := true
 	for i, c := range df.columns {
-		series[i] = c.Filter(mask).(*ArrowSeries)
+		if result, ok := c.computeFilter(mask); ok {
+			series[i] = result.(*ArrowSeries)
+		} else {
+			allCompute = false
+			break
+		}
+	}
+	if allCompute {
+		newIdx := df.reindex(indices)
+		return newDataFrameWithIndex(series, newIdx)
+	}
+
+	// Fallback: manual Take per column
+	for i, c := range df.columns {
+		series[i] = c.Take(indices).(*ArrowSeries)
 	}
 	newIdx := df.reindex(indices)
 	return newDataFrameWithIndex(series, newIdx)

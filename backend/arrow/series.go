@@ -1,11 +1,13 @@
 package arrow
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	"github.com/apache/arrow/go/v18/arrow"
 	"github.com/apache/arrow/go/v18/arrow/array"
+	"github.com/apache/arrow/go/v18/arrow/compute"
 	"github.com/apache/arrow/go/v18/arrow/memory"
 	"github.com/lekeeith/godas/core"
 )
@@ -141,7 +143,6 @@ func (s *ArrowSeries) Slice(start, end int) core.Series {
 
 func (s *ArrowSeries) Filter(mask []bool) core.Series {
 	if len(mask) != s.Len() {
-		// Defensive: return empty series instead of panic
 		alloc := memory.NewGoAllocator()
 		bldr := array.NewBuilder(alloc, s.arr.DataType())
 		defer bldr.Release()
@@ -156,7 +157,82 @@ func (s *ArrowSeries) Filter(mask []bool) core.Series {
 	return s.Take(indices)
 }
 
+// computeFilter uses Arrow's native compute engine (SIMD-accelerated) to filter.
+// Returns (result, true) on success, or (nil, false) if falling back to manual.
+func (s *ArrowSeries) computeFilter(mask []bool) (core.Series, bool) {
+	if len(mask) != s.Len() {
+		return nil, false
+	}
+	// Convert []bool mask → Arrow BooleanArray
+	alloc := memory.NewGoAllocator()
+	boolBldr := array.NewBooleanBuilder(alloc)
+	defer boolBldr.Release()
+	boolBldr.Resize(len(mask))
+	for _, m := range mask {
+		boolBldr.Append(m)
+	}
+	filterArr := boolBldr.NewArray()
+	defer filterArr.Release()
+
+	// Call Arrow compute.Filter
+	ctx := context.Background()
+	valDatum := compute.NewDatum(s.arr)
+	filterDatum := compute.NewDatum(filterArr)
+	result, err := compute.Filter(ctx, valDatum, filterDatum, *compute.DefaultFilterOptions())
+	if err != nil {
+		return nil, false
+	}
+	defer result.Release()
+
+	// Extract result array
+	arrDatum, ok := result.(*compute.ArrayDatum)
+	if !ok {
+		return nil, false
+	}
+	newArr := arrDatum.MakeArray()
+
+	// Build new index
+	var indices []int
+	for i, m := range mask {
+		if m {
+			indices = append(indices, i)
+		}
+	}
+	newIdx := s.reindex(indices)
+	return NewArrowSeries(s.name, newArr, newIdx), true
+}
+
+// isContiguous checks if indices form a contiguous range [start, end).
+func isContiguous(indices []int) (int, int, bool) {
+	if len(indices) == 0 {
+		return 0, 0, true
+	}
+	start := indices[0]
+	end := indices[len(indices)-1] + 1
+	if end-start != len(indices) {
+		return 0, 0, false
+	}
+	return start, end, true
+}
+
 func (s *ArrowSeries) Take(indices []int) core.Series {
+	if len(indices) == 0 {
+		alloc := memory.NewGoAllocator()
+		bldr := array.NewBuilder(alloc, s.arr.DataType())
+		defer bldr.Release()
+		return NewArrowSeries(s.name, bldr.NewArray(), s.reindex(nil))
+	}
+
+	// Optimization: contiguous indices → zero-copy Slice (O(1), no data copy)
+	if start, end, ok := isContiguous(indices); ok {
+		sliced := array.NewSlice(s.arr, int64(start), int64(end))
+		defer sliced.Release()
+		newArr := array.MakeFromData(sliced.Data())
+		newIdx := s.index.Slice(start, end)
+		return NewArrowSeries(s.name, newArr, newIdx)
+	}
+
+	// Non-contiguous: use Arrow builder with direct type access
 	alloc := memory.NewGoAllocator()
 	bldr := array.NewBuilder(alloc, s.arr.DataType())
 	defer bldr.Release()
@@ -166,31 +242,31 @@ func (s *ArrowSeries) Take(indices []int) core.Series {
 		if s.IsNull(idx) {
 			bldr.AppendNull()
 		} else {
-			switch s.arr.(type) {
+			switch a := s.arr.(type) {
 			case *array.Boolean:
-				bldr.(*array.BooleanBuilder).Append(s.Bool(idx))
+				bldr.(*array.BooleanBuilder).Append(a.Value(idx))
 			case *array.Int8:
-				bldr.(*array.Int8Builder).Append(int8(s.Int(idx)))
+				bldr.(*array.Int8Builder).Append(a.Value(idx))
 			case *array.Int16:
-				bldr.(*array.Int16Builder).Append(int16(s.Int(idx)))
+				bldr.(*array.Int16Builder).Append(a.Value(idx))
 			case *array.Int32:
-				bldr.(*array.Int32Builder).Append(int32(s.Int(idx)))
+				bldr.(*array.Int32Builder).Append(a.Value(idx))
 			case *array.Int64:
-				bldr.(*array.Int64Builder).Append(s.Int(idx))
+				bldr.(*array.Int64Builder).Append(a.Value(idx))
 			case *array.Uint8:
-				bldr.(*array.Uint8Builder).Append(uint8(s.Int(idx)))
+				bldr.(*array.Uint8Builder).Append(a.Value(idx))
 			case *array.Uint16:
-				bldr.(*array.Uint16Builder).Append(uint16(s.Int(idx)))
+				bldr.(*array.Uint16Builder).Append(a.Value(idx))
 			case *array.Uint32:
-				bldr.(*array.Uint32Builder).Append(uint32(s.Int(idx)))
+				bldr.(*array.Uint32Builder).Append(a.Value(idx))
 			case *array.Uint64:
-				bldr.(*array.Uint64Builder).Append(uint64(s.Int(idx)))
+				bldr.(*array.Uint64Builder).Append(a.Value(idx))
 			case *array.Float32:
-				bldr.(*array.Float32Builder).Append(float32(s.Float(idx)))
+				bldr.(*array.Float32Builder).Append(a.Value(idx))
 			case *array.Float64:
-				bldr.(*array.Float64Builder).Append(s.Float(idx))
+				bldr.(*array.Float64Builder).Append(a.Value(idx))
 			case *array.String:
-				bldr.(*array.StringBuilder).Append(s.String(idx))
+				bldr.(*array.StringBuilder).Append(a.Value(idx))
 			}
 		}
 	}
