@@ -9,12 +9,13 @@
 - [x] DType — bool/int8-64/uint8-64/float32/64/string/timestamp/duration
 - [x] SeriesBuilder — 增量构建
 
-### I/O (5/5)
+### I/O (6/6)
 - [x] CSV — ReadCSV/WriteCSV + 类型推断
 - [x] JSON — ReadJSON/WriteJSON + NDJSON
 - [x] Parquet — ReadParquetFile/WriteParquetFile
 - [x] Excel — ReadExcelFile/WriteExcelFile (excelize)
 - [x] DataFrame 便捷写入 — ToJSON/ToJSONLines/WriteCSVFile/WriteJSONFile/WriteJSONLinesFile
+- [x] **ScanCSV** — Polars 风格懒加载扫描器（谓词下推 + 投影下推 + 流式分块）
 
 ### 选择索引 (8/8)
 - [x] Col/SelectCols/DropCols — 按列名访问
@@ -95,6 +96,9 @@
 - [x] **DataFrame I/O 便捷方法** — ToJSON/ToJSONLines/WriteCSVFile/WriteJSONFile/WriteJSONLinesFile
 - [x] **LazyFrame 查询优化器** — Filter Fusion（连续 filter 合并为 AND 表达式）
 - [x] **并行化扩展** — DropNA/FillNA/Agg 在列数 ≥ 4 时自动并行化；新增 ParallelDropNA/ParallelFillNA
+- [x] **DataFrame.String()** — 实现 fmt.Stringer，fmt.Println(df) 自动输出带边框表格
+- [x] **Info() 格式化** — 改为带边框的表格输出（Column/DType/Non-Null）
+- [x] **core.DataFrame 接口补齐** — 补充 String/ToJSON/ToJSONLines/WriteJSONFile/WriteJSONLinesFile/WriteCSVFile
 
 ---
 
@@ -116,6 +120,13 @@
 - [x] **并行 Transform/Agg** — Go goroutine 自动并行化列操作
 - [x] **并行 GroupBy** — 分组聚合自动分片并行
 - [x] **ScanParquet** — 惰性扫描，不全量加载
+- [x] **Filter 三层优化** — 连续零拷贝 Slice + Arrow SIMD compute.Filter + 手动 Take
+- [x] **Series.Take 优化** — 连续索引走 array.NewSlice O(1)，非连续直接 a.Value(idx)
+- [x] **DataFrame.Filter 单次扫描** — mask 只扫一次，不再每列重复扫
+- [x] **ScanCSV 流式扫描** — Polars 风格，谓词下推 + 投影下推，边读边过滤
+- [x] **ForEach 流式分块** — chunkSize 回调模式，内存 O(chunkSize × cols)
+- [x] **ForEach 断点续传** — 返回已处理行数 + Offset(n) 跳过
+- [x] **benchmark_test.go** — Filter/TakeContiguous/TakeScattered 基准测试
 
 ### Phase 2: 表达式系统 ✅
 - [x] **Expr 类型** — 可序列化的表达式描述 (col("x").Add(1).Filter(>5))
@@ -151,5 +162,5 @@
 | Pandas 已完成 | ~85 |
 | Pandas 覆盖率 | **~100%** |
 | Polars 特性 | Phase 1-6 全部完成 |
-| 测试数 | **277** |
-| Go 文件 | **59** |
+| 测试数 | **285** |
+| Go 文件 | **65** |
