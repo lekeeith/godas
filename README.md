@@ -1,4 +1,4 @@
-# godans
+# godas
 
 **Pandas for Go** — A high-performance DataFrame library built on Apache Arrow.
 
@@ -6,7 +6,7 @@
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/Tests-197%20passed-brightgreen)](#testing)
 
-godans brings the familiar pandas API to Go, using Apache Arrow's columnar memory format as the backend for zero-copy, cache-friendly data processing.
+godas brings the familiar pandas API to Go, using Apache Arrow's columnar memory format as the backend for zero-copy, cache-friendly data processing.
 
 ---
 
@@ -189,7 +189,7 @@ go test ./backend/arrow/ -bench=. -benchmem -count=1
 ## Architecture
 
 ```
-godans/
+godas/
 ├── core/                    # Interface layer (backend-agnostic)
 │   ├── dtype.go             # DType enum + helpers
 │   ├── index.go             # Index interface (Range/Int64/String/DateTime)

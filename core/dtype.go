@@ -1,4 +1,4 @@
-// Package core defines the fundamental types and interfaces for godans.
+// Package core defines the fundamental types and interfaces for godas.
 package core
 
 // DType represents the data type of a column or series.

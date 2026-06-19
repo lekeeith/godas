@@ -259,5 +259,5 @@ func buildParquetSchema(df *arrow.ArrowDataFrame) *parquet.Schema {
 		}
 		nodes[name] = node
 	}
-	return parquet.NewSchema("godans", nodes)
+	return parquet.NewSchema("godas", nodes)
 }
