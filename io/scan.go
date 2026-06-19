@@ -25,6 +25,7 @@ type ScanCSV struct {
 	columns []string // projection (empty = all)
 	filters []scanFilter
 	limit   int
+	offset  int // skip first N matched rows (for resume)
 }
 
 // ScanCSVFile creates a lazy CSV scanner.
@@ -47,6 +48,12 @@ func (s *ScanCSV) Filter(col, op string, val interface{}) *ScanCSV {
 // Limit limits returned rows.
 func (s *ScanCSV) Limit(n int) *ScanCSV {
 	s.limit = n
+	return s
+}
+
+// Offset skips the first N matched rows (for resume after error).
+func (s *ScanCSV) Offset(n int) *ScanCSV {
+	s.offset = n
 	return s
 }
 
@@ -276,6 +283,171 @@ func buildColumnFromStrings(name string, dt core.DType, vals []string, alloc mem
 		bldr.Release()
 		return s
 	}
+}
+
+// ForEach streams matched rows in chunks, calling fn for each chunk.
+// Memory usage is O(chunkSize × projCols), independent of total file size.
+// Returns (processedRows, error). On error, processedRows tells how many matched rows
+// were successfully sent to fn — use Offset(processedRows) to resume from where it left off.
+func (s *ScanCSV) ForEach(chunkSize int, fn func(chunk *arrow.ArrowDataFrame) error) (int, error) {
+	if chunkSize <= 0 {
+		chunkSize = 10000
+	}
+
+	f, err := os.Open(s.path)
+	if err != nil {
+		return 0, fmt.Errorf("open %s: %w", s.path, err)
+	}
+	defer f.Close()
+
+	reader := csv.NewReader(f)
+	reader.LazyQuotes = true
+	reader.FieldsPerRecord = -1
+
+	header, err := reader.Read()
+	if err != nil {
+		return 0, fmt.Errorf("read header: %w", err)
+	}
+	numCols := len(header)
+
+	colIdx := make(map[string]int, numCols)
+	for i, h := range header {
+		colIdx[strings.TrimSpace(h)] = i
+	}
+
+	// Validate filter columns
+	filterColIdx := make([]int, len(s.filters))
+	filterVals := make([]string, len(s.filters))
+	for i, flt := range s.filters {
+		idx, ok := colIdx[flt.col]
+		if !ok {
+			return 0, fmt.Errorf("filter column %q not found", flt.col)
+		}
+		filterColIdx[i] = idx
+		filterVals[i], _ = flt.val.(string)
+	}
+
+	// Determine projection columns
+	projCols := s.columns
+	if len(projCols) == 0 {
+		projCols = make([]string, numCols)
+		copy(projCols, header)
+	}
+	projColIdx := make([]int, len(projCols))
+	for j, name := range projCols {
+		idx, ok := colIdx[strings.TrimSpace(name)]
+		if !ok {
+			return 0, fmt.Errorf("column %q not found", name)
+		}
+		projColIdx[j] = idx
+	}
+	numProj := len(projCols)
+
+	// Chunk buffer
+	collected := make([][]string, numProj)
+	for j := range collected {
+		collected[j] = make([]string, 0, chunkSize)
+	}
+	matchCount := 0
+	totalSent := 0
+	skipped := 0 // rows skipped due to Offset
+
+	flush := func() error {
+		if matchCount == 0 {
+			return nil
+		}
+		alloc := memory.NewGoAllocator()
+		series := make([]*arrow.ArrowSeries, numProj)
+		for j, name := range projCols {
+			dt := inferColumnTypeFromStrings(collected[j])
+			series[j] = buildColumnFromStrings(strings.TrimSpace(name), dt, collected[j], alloc)
+		}
+		chunk := arrow.NewDataFrame(series...)
+		if err := fn(chunk); err != nil {
+			return err
+		}
+		totalSent += matchCount
+		// Reset buffers
+		for j := range collected {
+			collected[j] = collected[j][:0]
+		}
+		matchCount = 0
+		return nil
+	}
+
+	for {
+		record, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			// Flush what we have so far before returning error
+			if matchCount > 0 {
+				if ferr := flush(); ferr != nil {
+					return totalSent, fmt.Errorf("read row: %w (flush also failed: %v)", err, ferr)
+				}
+			}
+			return totalSent, fmt.Errorf("read row: %w", err)
+		}
+
+		// Predicate pushdown
+		match := true
+		for i, flt := range s.filters {
+			sv := strings.TrimSpace(record[filterColIdx[i]])
+			switch flt.op {
+			case "==":
+				match = sv == filterVals[i]
+			case "!=":
+				match = sv != filterVals[i]
+			case ">":
+				match = sv > filterVals[i]
+			case "<":
+				match = sv < filterVals[i]
+			case ">=":
+				match = sv >= filterVals[i]
+			case "<=":
+				match = sv <= filterVals[i]
+			default:
+				match = sv == filterVals[i]
+			}
+			if !match {
+				break
+			}
+		}
+		if !match {
+			continue
+		}
+
+		// Skip rows due to Offset (resume support)
+		if skipped < s.offset {
+			skipped++
+			continue
+		}
+
+		// Collect projected columns
+		for j, idx := range projColIdx {
+			collected[j] = append(collected[j], strings.TrimSpace(record[idx]))
+		}
+		matchCount++
+
+		// Flush when chunk is full
+		if matchCount >= chunkSize {
+			if err := flush(); err != nil {
+				return totalSent, err
+			}
+		}
+
+		// Apply limit
+		if s.limit > 0 && totalSent+matchCount >= s.limit {
+			break
+		}
+	}
+
+	// Flush remaining rows
+	if err := flush(); err != nil {
+		return totalSent, err
+	}
+	return totalSent, nil
 }
 
 // ScanParquet lazily reads a Parquet file with projection and predicate pushdown.
