@@ -99,6 +99,27 @@ if err != nil {
 fmt.Println(df)
 ```
 
+#### CSV Options
+
+`ReadCSV` and `ReadCSVFile` accept an optional `CSVOptions` for delimiter, skip lines, and header control:
+
+```go
+// Semicolon-separated file
+df, err := io.ReadCSVFile("data.csv", io.CSVOptions{Comma: ';'})
+
+// Tab-separated, skip 2 comment/metadata lines at the top
+df, err := io.ReadCSVFile("data.tsv", io.CSVOptions{Comma: '\t', SkipLines: 2})
+
+// No header row — columns auto-named as col0, col1, ...
+df, err := io.ReadCSV("alice,25\nbob,30\n", io.CSVOptions{NoHeader: true})
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `Comma` | `rune` | `','` | Field delimiter (`';'`, `'\t'`, etc.) |
+| `SkipLines` | `int` | `0` | Skip first N lines (metadata/comments) |
+| `NoHeader` | `bool` | `false` | No header row, auto-generate `col0`, `col1`, ... |
+
 ### ScanCSV — Lazy Scanning for Large Files
 
 For large CSV files (GB+), use `ScanCSV` for streaming with predicate/projection pushdown:
@@ -111,8 +132,17 @@ df, err := io.ScanCSVFile("huge.csv").
     Select("time", "citycode", "poll", "value").
     Collect()
 
+// Semicolon-separated file with 3 comment lines at the top
+df, err := io.ScanCSVFile("data.csv").
+    Delimiter(';').
+    SkipLines(3).
+    Filter("age", ">", "25").
+    Collect()
+
 // ForEach: stream in chunks, callback per chunk (memory = O(chunkSize × cols))
 processed, err := io.ScanCSVFile("huge.csv").
+    Delimiter('\t').              // TSV file
+    SkipLines(1).                // skip header comment
     Filter("citycode", "==", "320600").
     ForEach(10000, func(chunk *arrow.ArrowDataFrame) error {
         // process chunk (e.g., insert to DB)
@@ -297,6 +327,8 @@ filtered := compute.Filter(arr, mask)       // SIMD-accelerated
 | Method | Description |
 |--------|-------------|
 | `ScanCSVFile(path)` | Create lazy scanner |
+| `Delimiter(c)` | Set field delimiter (default `,`) |
+| `SkipLines(n)` | Skip first N lines before header |
 | `Filter(col, op, val)` | Predicate pushdown (==, !=, >, <, >=, <=) |
 | `Select(columns...)` | Projection pushdown |
 | `Limit(n)` | Limit rows |
@@ -308,9 +340,9 @@ filtered := compute.Filter(arr, mask)       // SIMD-accelerated
 
 | Format | Read | Write |
 |--------|------|-------|
-| CSV | `ReadCSV(data)`, `ReadCSVFile(path)` | `WriteCSV(df)`, `WriteCSVFile(df, path)` |
-| CSV Streaming | `ScanCSVFile(path).Filter(...).Collect()` | — |
-| CSV Chunked | `ScanCSVFile(path).Filter(...).ForEach(n, fn)` | — |
+| CSV | `ReadCSV(data, ...CSVOptions)`, `ReadCSVFile(path, ...CSVOptions)` | `WriteCSV(df)`, `WriteCSVFile(df, path)` |
+| CSV Streaming | `ScanCSVFile(path).Delimiter(';').SkipLines(n).Filter(...).Collect()` | — |
+| CSV Chunked | `ScanCSVFile(path).Delimiter(';').Filter(...).ForEach(n, fn)` | — |
 | JSON | `ReadJSON(data)`, `ReadJSONFile(path)` | `WriteJSON(df)`, `WriteJSONFile(df, path)` |
 | NDJSON | `ReadJSONLines(data)`, `ReadJSONLinesFile(path)` | `WriteJSONLines(df)`, `WriteJSONLinesFile(df, path)` |
 | Parquet | `ReadParquetFile(path)` | `WriteParquetFile(df, path)` |

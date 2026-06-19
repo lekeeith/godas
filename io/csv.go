@@ -3,6 +3,7 @@ package io
 import (
 	"encoding/csv"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -13,43 +14,107 @@ import (
 	"github.com/lekeeith/godas/core"
 )
 
+// CSVOptions configures CSV reading behaviour.
+// Zero values use sensible defaults: Comma=0 (meaning ','), SkipLines=0, HasHeader=false (meaning true).
+//
+// Because bool zero-value is false, we flip the semantics: the field is actually "NoHeader".
+// NoHeader=false (zero) → first row is a header (the common case).
+// NoHeader=true → no header row, columns are named col0, col1, ...
+type CSVOptions struct {
+	Comma     rune // field delimiter; 0 defaults to ','
+	SkipLines int  // skip first N lines before the header (e.g. metadata/comment lines)
+	NoHeader  bool // true = first row is data, not a header
+}
+
+var defaultCSVOptions = CSVOptions{
+	Comma: ',',
+}
+
+func resolveCSVOptions(opts []CSVOptions) CSVOptions {
+	if len(opts) == 0 {
+		return defaultCSVOptions
+	}
+	o := opts[0]
+	if o.Comma == 0 {
+		o.Comma = ','
+	}
+	return o
+}
+
 // ReadCSV reads a CSV string into a DataFrame with automatic type inference.
-func ReadCSV(data string) (*arrow.ArrowDataFrame, error) {
+func ReadCSV(data string, opts ...CSVOptions) (*arrow.ArrowDataFrame, error) {
+	opt := resolveCSVOptions(opts)
 	r := csv.NewReader(strings.NewReader(data))
-	return readCSVReader(r)
+	r.Comma = opt.Comma
+	return readCSVReader(r, opt)
 }
 
 // ReadCSVFile reads a CSV file into a DataFrame.
-func ReadCSVFile(path string) (*arrow.ArrowDataFrame, error) {
+func ReadCSVFile(path string, opts ...CSVOptions) (*arrow.ArrowDataFrame, error) {
+	opt := resolveCSVOptions(opts)
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
 	defer f.Close()
-	return readCSVReader(csv.NewReader(f))
+	r := csv.NewReader(f)
+	r.Comma = opt.Comma
+	return readCSVReader(r, opt)
 }
 
-func readCSVReader(r *csv.Reader) (*arrow.ArrowDataFrame, error) {
+func readCSVReader(r *csv.Reader, opt CSVOptions) (*arrow.ArrowDataFrame, error) {
+	// Allow variable field counts (e.g. after SkipLines, comment lines may differ)
+	r.FieldsPerRecord = -1
+
+	// Skip leading lines (metadata, comments, etc.)
+	for i := 0; i < opt.SkipLines; i++ {
+		if _, err := r.Read(); err != nil {
+			if err == io.EOF {
+				return nil, fmt.Errorf("csv has fewer lines than SkipLines=%d", opt.SkipLines)
+			}
+			return nil, fmt.Errorf("skip line %d: %w", i+1, err)
+		}
+	}
+
 	records, err := r.ReadAll()
 	if err != nil {
 		return nil, fmt.Errorf("read csv: %w", err)
 	}
-	if len(records) < 2 {
-		return nil, fmt.Errorf("csv must have at least a header and one data row")
+
+	if !opt.NoHeader {
+		// First row is header
+		if len(records) < 2 {
+			return nil, fmt.Errorf("csv must have at least a header and one data row")
+		}
+		headers := records[0]
+		rows := records[1:]
+		numCols := len(headers)
+		numRows := len(rows)
+		colTypes := inferTypes(rows, numCols)
+		alloc := memory.NewGoAllocator()
+
+		cols := make([]*arrow.ArrowSeries, numCols)
+		for j := 0; j < numCols; j++ {
+			cols[j] = buildColumn(headers[j], colTypes[j], rows, j, numRows, alloc)
+		}
+		return arrow.NewDataFrame(cols...), nil
 	}
 
-	headers := records[0]
-	rows := records[1:]
-	numCols := len(headers)
+	// No header: generate column names col0, col1, ...
+	if len(records) == 0 {
+		return nil, fmt.Errorf("csv has no data rows")
+	}
+	rows := records
+	numCols := len(rows[0])
 	numRows := len(rows)
 	colTypes := inferTypes(rows, numCols)
 	alloc := memory.NewGoAllocator()
 
 	cols := make([]*arrow.ArrowSeries, numCols)
 	for j := 0; j < numCols; j++ {
-		cols[j] = buildColumn(headers[j], colTypes[j], rows, j, numRows, alloc)
+		name := fmt.Sprintf("col%d", j)
+		cols[j] = buildColumn(name, colTypes[j], rows, j, numRows, alloc)
 	}
-
 	return arrow.NewDataFrame(cols...), nil
 }
 

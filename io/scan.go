@@ -21,16 +21,30 @@ import (
 //   - Predicate pushdown: filter during scan, not after
 //   - Streaming: no full materialization, only keep matched rows
 type ScanCSV struct {
-	path    string
-	columns []string // projection (empty = all)
-	filters []scanFilter
-	limit   int
-	offset  int // skip first N matched rows (for resume)
+	path      string
+	columns   []string // projection (empty = all)
+	filters   []scanFilter
+	limit     int
+	offset    int  // skip first N matched rows (for resume)
+	comma     rune // field delimiter; 0 defaults to ','
+	skipLines int  // skip first N lines before header
 }
 
 // ScanCSVFile creates a lazy CSV scanner.
 func ScanCSVFile(path string) *ScanCSV {
 	return &ScanCSV{path: path}
+}
+
+// Delimiter sets the field delimiter (default ',').
+func (s *ScanCSV) Delimiter(c rune) *ScanCSV {
+	s.comma = c
+	return s
+}
+
+// SkipLines skips the first N lines before the header (e.g. metadata/comment lines).
+func (s *ScanCSV) SkipLines(n int) *ScanCSV {
+	s.skipLines = n
+	return s
 }
 
 // Select specifies columns to read (projection pushdown).
@@ -69,6 +83,19 @@ func (s *ScanCSV) Collect() (*arrow.ArrowDataFrame, error) {
 	reader := csv.NewReader(f)
 	reader.LazyQuotes = true
 	reader.FieldsPerRecord = -1
+	if s.comma != 0 {
+		reader.Comma = s.comma
+	}
+
+	// Skip leading lines
+	for i := 0; i < s.skipLines; i++ {
+		if _, err := reader.Read(); err != nil {
+			if err == io.EOF {
+				return nil, fmt.Errorf("csv has fewer lines than SkipLines=%d", s.skipLines)
+			}
+			return nil, fmt.Errorf("skip line %d: %w", i+1, err)
+		}
+	}
 
 	// Read header
 	header, err := reader.Read()
@@ -303,6 +330,19 @@ func (s *ScanCSV) ForEach(chunkSize int, fn func(chunk *arrow.ArrowDataFrame) er
 	reader := csv.NewReader(f)
 	reader.LazyQuotes = true
 	reader.FieldsPerRecord = -1
+	if s.comma != 0 {
+		reader.Comma = s.comma
+	}
+
+	// Skip leading lines
+	for i := 0; i < s.skipLines; i++ {
+		if _, err := reader.Read(); err != nil {
+			if err == io.EOF {
+				return 0, fmt.Errorf("csv has fewer lines than SkipLines=%d", s.skipLines)
+			}
+			return 0, fmt.Errorf("skip line %d: %w", i+1, err)
+		}
+	}
 
 	header, err := reader.Read()
 	if err != nil {
