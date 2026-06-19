@@ -113,7 +113,32 @@ func (s *ArrowSeries) String(i int) string {
 	if a, ok := s.arr.(*array.String); ok {
 		return a.Value(i)
 	}
-	return fmt.Sprintf("%v", s.arr.(*array.Int64).Value(i))
+	switch a := s.arr.(type) {
+	case *array.Int64:
+		return fmt.Sprintf("%d", a.Value(i))
+	case *array.Int32:
+		return fmt.Sprintf("%d", a.Value(i))
+	case *array.Int16:
+		return fmt.Sprintf("%d", a.Value(i))
+	case *array.Int8:
+		return fmt.Sprintf("%d", a.Value(i))
+	case *array.Uint64:
+		return fmt.Sprintf("%d", a.Value(i))
+	case *array.Uint32:
+		return fmt.Sprintf("%d", a.Value(i))
+	case *array.Uint16:
+		return fmt.Sprintf("%d", a.Value(i))
+	case *array.Uint8:
+		return fmt.Sprintf("%d", a.Value(i))
+	case *array.Float64:
+		return fmt.Sprintf("%g", a.Value(i))
+	case *array.Float32:
+		return fmt.Sprintf("%g", a.Value(i))
+	case *array.Boolean:
+		return fmt.Sprintf("%v", a.Value(i))
+	default:
+		return fmt.Sprintf("%v", s.arr.ValueStr(i))
+	}
 }
 
 func (s *ArrowSeries) Head(n int) core.Series {

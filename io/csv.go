@@ -178,3 +178,61 @@ func WriteCSV(df *arrow.ArrowDataFrame) string {
 func WriteCSVFile(df *arrow.ArrowDataFrame, path string) error {
 	return os.WriteFile(path, []byte(df.ToCSV()), 0644)
 }
+
+// CSVWriter writes DataFrame chunks to a CSV file incrementally.
+// Header is written on the first chunk; subsequent chunks append rows.
+type CSVWriter struct {
+	file       *os.File
+	writer     *csv.Writer
+	headerDone bool
+}
+
+// NewCSVWriter creates a streaming CSV writer.
+func NewCSVWriter(path string) (*CSVWriter, error) {
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, fmt.Errorf("create %s: %w", path, err)
+	}
+	w := csv.NewWriter(f)
+	return &CSVWriter{file: f, writer: w}, nil
+}
+
+// WriteChunk appends a DataFrame chunk to the CSV file.
+func (cw *CSVWriter) WriteChunk(df *arrow.ArrowDataFrame) error {
+	colNames := df.Columns()
+
+	// Write header on first chunk
+	if !cw.headerDone {
+		if err := cw.writer.Write(colNames); err != nil {
+			return fmt.Errorf("write csv header: %w", err)
+		}
+		cw.headerDone = true
+	}
+
+	numRows, _ := df.Shape()
+	record := make([]string, len(colNames))
+	for i := 0; i < numRows; i++ {
+		for j, name := range colNames {
+			s := df.Col(name)
+			if s.IsNull(i) {
+				record[j] = ""
+			} else {
+				record[j] = s.String(i)
+			}
+		}
+		if err := cw.writer.Write(record); err != nil {
+			return fmt.Errorf("write csv row: %w", err)
+		}
+	}
+	cw.writer.Flush()
+	return cw.writer.Error()
+}
+
+// Close flushes and closes the file.
+func (cw *CSVWriter) Close() error {
+	cw.writer.Flush()
+	if err := cw.writer.Error(); err != nil {
+		return err
+	}
+	return cw.file.Close()
+}

@@ -146,6 +146,69 @@ func WriteJSONLinesFile(df *arrow.ArrowDataFrame, path string) error {
 	return os.WriteFile(path, []byte(s), 0644)
 }
 
+// JSONWriter writes DataFrame chunks to an NDJSON file incrementally.
+// Each row is a separate JSON object (one per line), suitable for streaming.
+type JSONWriter struct {
+	file   *os.File
+	closed bool
+}
+
+// NewJSONWriter creates a streaming NDJSON writer.
+func NewJSONWriter(path string) (*JSONWriter, error) {
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, fmt.Errorf("create %s: %w", path, err)
+	}
+	return &JSONWriter{file: f}, nil
+}
+
+// WriteChunk appends a DataFrame chunk as NDJSON lines.
+func (jw *JSONWriter) WriteChunk(df *arrow.ArrowDataFrame) error {
+	rows, _ := df.Shape()
+	colNames := df.Columns()
+
+	for i := 0; i < rows; i++ {
+		row := make(map[string]interface{}, len(colNames))
+		for _, name := range colNames {
+			s := df.Col(name)
+			if s.IsNull(i) {
+				row[name] = nil
+				continue
+			}
+			switch s.Dtype() {
+			case core.BOOL:
+				row[name] = s.Bool(i)
+			case core.FLOAT32, core.FLOAT64:
+				row[name] = s.Float(i)
+			case core.STRING:
+				row[name] = s.String(i)
+			default:
+				row[name] = s.Int(i)
+			}
+		}
+		line, err := json.Marshal(row)
+		if err != nil {
+			return fmt.Errorf("marshal json line: %w", err)
+		}
+		if _, err := jw.file.Write(line); err != nil {
+			return err
+		}
+		if _, err := jw.file.Write([]byte{'\n'}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Close closes the file.
+func (jw *JSONWriter) Close() error {
+	if jw.closed {
+		return nil
+	}
+	jw.closed = true
+	return jw.file.Close()
+}
+
 // buildFromMaps constructs a DataFrame from a slice of maps.
 func buildFromMaps(rows []map[string]interface{}) (*arrow.ArrowDataFrame, error) {
 	if len(rows) == 0 {
