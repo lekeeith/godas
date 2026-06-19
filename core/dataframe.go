@@ -72,8 +72,20 @@ type DataFrame interface {
 	// I/O
 	// ToCSV writes the DataFrame to a CSV string.
 	ToCSV() string
+	// ToJSON writes the DataFrame to a JSON array string.
+	ToJSON() (string, error)
+	// ToJSONLines writes the DataFrame to a NDJSON string.
+	ToJSONLines() (string, error)
+	// WriteJSONFile writes the DataFrame to a JSON file.
+	WriteJSONFile(path string) error
+	// WriteJSONLinesFile writes the DataFrame to a NDJSON file.
+	WriteJSONLinesFile(path string) error
+	// WriteCSVFile writes the DataFrame to a CSV file.
+	WriteCSVFile(path string) error
 
 	// Display
+	// String returns a formatted table string (implements fmt.Stringer).
+	String() string
 	// Fmt returns a formatted table string with default row count (top 5 + bottom 5).
 	Fmt() string
 	// Display returns a formatted table string showing top rows and bottom rows.
