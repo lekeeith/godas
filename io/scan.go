@@ -2,9 +2,12 @@ package io
 
 import (
 	"bytes"
+	"encoding/csv"
 	"fmt"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/apache/arrow/go/v18/arrow/array"
 	"github.com/apache/arrow/go/v18/arrow/memory"
@@ -12,6 +15,268 @@ import (
 	"github.com/lekeeith/godas/core"
 	"github.com/parquet-go/parquet-go"
 )
+
+// ScanCSV lazily reads a CSV file with Polars-style optimizations:
+//   - Projection pushdown: only read needed columns
+//   - Predicate pushdown: filter during scan, not after
+//   - Streaming: no full materialization, only keep matched rows
+type ScanCSV struct {
+	path    string
+	columns []string // projection (empty = all)
+	filters []scanFilter
+	limit   int
+}
+
+// ScanCSVFile creates a lazy CSV scanner.
+func ScanCSVFile(path string) *ScanCSV {
+	return &ScanCSV{path: path}
+}
+
+// Select specifies columns to read (projection pushdown).
+func (s *ScanCSV) Select(columns ...string) *ScanCSV {
+	s.columns = columns
+	return s
+}
+
+// Filter adds a predicate filter (col op val).
+func (s *ScanCSV) Filter(col, op string, val interface{}) *ScanCSV {
+	s.filters = append(s.filters, scanFilter{col: col, op: op, val: val})
+	return s
+}
+
+// Limit limits returned rows.
+func (s *ScanCSV) Limit(n int) *ScanCSV {
+	s.limit = n
+	return s
+}
+
+// Collect executes the lazy scan and returns a DataFrame.
+// Polars-style: stream rows, filter on-the-fly, only store matched projected columns.
+func (s *ScanCSV) Collect() (*arrow.ArrowDataFrame, error) {
+	f, err := os.Open(s.path)
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", s.path, err)
+	}
+	defer f.Close()
+
+	reader := csv.NewReader(f)
+	reader.LazyQuotes = true
+	reader.FieldsPerRecord = -1
+
+	// Read header
+	header, err := reader.Read()
+	if err != nil {
+		return nil, fmt.Errorf("read header: %w", err)
+	}
+	numCols := len(header)
+
+	// Build column index map
+	colIdx := make(map[string]int, numCols)
+	for i, h := range header {
+		colIdx[strings.TrimSpace(h)] = i
+	}
+
+	// Validate filter columns exist
+	filterColIdx := make([]int, len(s.filters))
+	filterVals := make([]string, len(s.filters))
+	for i, flt := range s.filters {
+		idx, ok := colIdx[flt.col]
+		if !ok {
+			return nil, fmt.Errorf("filter column %q not found", flt.col)
+		}
+		filterColIdx[i] = idx
+		filterVals[i], _ = flt.val.(string)
+	}
+
+	// Determine projection columns
+	projCols := s.columns
+	if len(projCols) == 0 {
+		projCols = make([]string, numCols)
+		copy(projCols, header)
+	}
+	projColIdx := make([]int, len(projCols))
+	for j, name := range projCols {
+		idx, ok := colIdx[strings.TrimSpace(name)]
+		if !ok {
+			return nil, fmt.Errorf("column %q not found", name)
+		}
+		projColIdx[j] = idx
+	}
+
+	// Stream rows: filter on-the-fly, only store matched projected values
+	// Each column collector is a []string — grow as matched rows come in
+	collected := make([][]string, len(projCols))
+	matchCount := 0
+
+	for {
+		record, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read row: %w", err)
+		}
+
+		// Apply all filters (predicate pushdown at scan level)
+		match := true
+		for i, flt := range s.filters {
+			sv := strings.TrimSpace(record[filterColIdx[i]])
+			switch flt.op {
+			case "==":
+				match = sv == filterVals[i]
+			case "!=":
+				match = sv != filterVals[i]
+			case ">":
+				match = sv > filterVals[i]
+			case "<":
+				match = sv < filterVals[i]
+			case ">=":
+				match = sv >= filterVals[i]
+			case "<=":
+				match = sv <= filterVals[i]
+			default:
+				match = sv == filterVals[i]
+			}
+			if !match {
+				break
+			}
+		}
+		if !match {
+			continue
+		}
+
+		// Row matched — collect only projected columns
+		matchCount++
+		for j, idx := range projColIdx {
+			collected[j] = append(collected[j], strings.TrimSpace(record[idx]))
+		}
+
+		// Apply limit
+		if s.limit > 0 && matchCount >= s.limit {
+			break
+		}
+	}
+
+	// Build Arrow arrays from collected strings
+	alloc := memory.NewGoAllocator()
+	series := make([]*arrow.ArrowSeries, len(projCols))
+	for j, name := range projCols {
+		dt := inferColumnTypeFromStrings(collected[j])
+		series[j] = buildColumnFromStrings(strings.TrimSpace(name), dt, collected[j], alloc)
+	}
+
+	return arrow.NewDataFrame(series...), nil
+}
+
+// inferColumnTypeFromStrings infers the DType from string values.
+func inferColumnTypeFromStrings(vals []string) core.DType {
+	boolCount, intCount, floatCount, total := 0, 0, 0, 0
+	sampleSize := len(vals)
+	if sampleSize > 100 {
+		sampleSize = 100
+	}
+	for i := 0; i < sampleSize; i++ {
+		val := strings.TrimSpace(vals[i])
+		if val == "" {
+			continue
+		}
+		total++
+		lower := strings.ToLower(val)
+		if lower == "true" || lower == "false" || lower == "yes" || lower == "no" {
+			boolCount++
+			continue
+		}
+		if _, err := strconv.ParseInt(val, 10, 64); err == nil {
+			intCount++
+			continue
+		}
+		if _, err := strconv.ParseFloat(val, 64); err == nil {
+			floatCount++
+			continue
+		}
+	}
+	if total == 0 {
+		return core.STRING
+	}
+	threshold := float64(total) * 0.8
+	if float64(boolCount) >= threshold {
+		return core.BOOL
+	}
+	if float64(intCount) >= threshold {
+		return core.INT64
+	}
+	if float64(intCount+floatCount) >= threshold {
+		return core.FLOAT64
+	}
+	return core.STRING
+}
+
+// buildColumnFromStrings builds an ArrowSeries from string values with type inference.
+func buildColumnFromStrings(name string, dt core.DType, vals []string, alloc memory.Allocator) *arrow.ArrowSeries {
+	n := len(vals)
+	switch dt {
+	case core.INT64:
+		bldr := array.NewInt64Builder(alloc)
+		bldr.Resize(n)
+		for _, v := range vals {
+			if v == "" {
+				bldr.AppendNull()
+			} else if iv, err := strconv.ParseInt(v, 10, 64); err == nil {
+				bldr.Append(iv)
+			} else {
+				bldr.AppendNull()
+			}
+		}
+		s := arrow.NewArrowSeries(name, bldr.NewArray(), nil)
+		bldr.Release()
+		return s
+	case core.FLOAT64:
+		bldr := array.NewFloat64Builder(alloc)
+		bldr.Resize(n)
+		for _, v := range vals {
+			if v == "" {
+				bldr.AppendNull()
+			} else if fv, err := strconv.ParseFloat(v, 64); err == nil {
+				bldr.Append(fv)
+			} else {
+				bldr.AppendNull()
+			}
+		}
+		s := arrow.NewArrowSeries(name, bldr.NewArray(), nil)
+		bldr.Release()
+		return s
+	case core.BOOL:
+		bldr := array.NewBooleanBuilder(alloc)
+		bldr.Resize(n)
+		for _, v := range vals {
+			lower := strings.ToLower(v)
+			switch lower {
+			case "true", "1", "yes":
+				bldr.Append(true)
+			case "false", "0", "no":
+				bldr.Append(false)
+			default:
+				bldr.AppendNull()
+			}
+		}
+		s := arrow.NewArrowSeries(name, bldr.NewArray(), nil)
+		bldr.Release()
+		return s
+	default:
+		bldr := array.NewStringBuilder(alloc)
+		bldr.Resize(n)
+		for _, v := range vals {
+			if v == "" {
+				bldr.AppendNull()
+			} else {
+				bldr.Append(v)
+			}
+		}
+		s := arrow.NewArrowSeries(name, bldr.NewArray(), nil)
+		bldr.Release()
+		return s
+	}
+}
 
 // ScanParquet lazily reads a Parquet file with projection and predicate pushdown.
 type ScanParquet struct {
