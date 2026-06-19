@@ -8,6 +8,8 @@
 
 godas brings the familiar pandas API to Go, using Apache Arrow's columnar memory format as the backend for zero-copy, cache-friendly data processing.
 
+English | [中文](README_zh.md)
+
 ---
 
 ## Features at a Glance
