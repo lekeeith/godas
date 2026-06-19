@@ -34,11 +34,9 @@ func readParquetBytes(data []byte) (*arrow.ArrowDataFrame, error) {
 	colNames := extractColumnNames(schema)
 	numCols := len(colNames)
 
-	// Use non-generic Reader
 	reader := parquet.NewReader(pf)
 	defer reader.Close()
 
-	// Read all rows in batches
 	allRows := make([]parquet.Row, 0, numRows)
 	buf := make([]parquet.Row, 256)
 	for {
@@ -188,13 +186,15 @@ func inferParquetType(values []parquet.Value) core.DType {
 }
 
 // ParquetWriter writes DataFrame chunks to a Parquet file incrementally.
-// Use with ForEach for streaming CSV �?Parquet conversion (memory = O(chunkSize)).
+// Use with ForEach for streaming CSV to Parquet conversion (memory = O(chunkSize)).
+// Schema and column types are locked from the first chunk; subsequent chunks convert values to match.
 type ParquetWriter struct {
-	file    *os.File
-	writer  *parquet.Writer
-	schema  *parquet.Schema
-	saved   bool // true if schema was set from first chunk
-	path    string
+	file       *os.File
+	writer     *parquet.Writer
+	schema     *parquet.Schema
+	schemaInit bool
+	colTypes   map[string]core.DType // locked types from first chunk
+	path       string
 }
 
 // NewParquetWriter creates a streaming Parquet writer.
@@ -208,11 +208,17 @@ func NewParquetWriter(path string) (*ParquetWriter, error) {
 }
 
 // WriteChunk writes a DataFrame as one row group in the Parquet file.
+// First call locks the schema and column types. Subsequent calls convert values to match.
 func (pw *ParquetWriter) WriteChunk(df *arrow.ArrowDataFrame) error {
-	if !pw.saved {
+	if !pw.schemaInit {
 		pw.schema = buildParquetSchema(df)
-		pw.writer = parquet.NewWriter(pw.file, pw.schema)
-		pw.saved = true
+		pw.writer = parquet.NewWriter(pw.file, pw.schema, parquet.Compression(&parquet.Snappy))
+		// Lock column types from first chunk
+		pw.colTypes = make(map[string]core.DType, len(df.Columns()))
+		for _, name := range df.Columns() {
+			pw.colTypes[name] = df.Col(name).Dtype()
+		}
+		pw.schemaInit = true
 	}
 
 	buf := parquet.NewBuffer(pw.schema)
@@ -226,7 +232,8 @@ func (pw *ParquetWriter) WriteChunk(df *arrow.ArrowDataFrame) error {
 			if s.IsNull(i) {
 				row[name] = nil
 			} else {
-				switch s.Dtype() {
+				// Use schema-locked type, not chunk's Dtype
+				switch pw.colTypes[name] {
 				case core.BOOL:
 					row[name] = s.Bool(i)
 				case core.FLOAT32, core.FLOAT64:
@@ -270,7 +277,6 @@ func WriteParquetFile(df *arrow.ArrowDataFrame, path string) error {
 
 	schema := buildParquetSchema(df)
 
-	// Write to buffer first, then flush to file
 	buf := parquet.NewBuffer(schema)
 	numRows, _ := df.Shape()
 	colNames := df.Columns()
@@ -300,8 +306,7 @@ func WriteParquetFile(df *arrow.ArrowDataFrame, path string) error {
 		}
 	}
 
-	// Flush buffer to file
-	writer := parquet.NewWriter(f, schema)
+	writer := parquet.NewWriter(f, schema, parquet.Compression(&parquet.Snappy))
 	defer writer.Close()
 
 	if _, err := writer.WriteRowGroup(buf); err != nil {
