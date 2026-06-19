@@ -187,6 +187,78 @@ func inferParquetType(values []parquet.Value) core.DType {
 	return core.STRING
 }
 
+// ParquetWriter writes DataFrame chunks to a Parquet file incrementally.
+// Use with ForEach for streaming CSV → Parquet conversion (memory = O(chunkSize)).
+type ParquetWriter struct {
+	file    *os.File
+	writer  *parquet.Writer
+	schema  *parquet.Schema
+	saved   bool // true if schema was set from first chunk
+	path    string
+}
+
+// NewParquetWriter creates a streaming Parquet writer.
+// Schema is determined from the first WriteChunk call.
+func NewParquetWriter(path string) (*ParquetWriter, error) {
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, fmt.Errorf("create %s: %w", path, err)
+	}
+	return &ParquetWriter{file: f, path: path}, nil
+}
+
+// WriteChunk writes a DataFrame as one row group in the Parquet file.
+func (pw *ParquetWriter) WriteChunk(df *arrow.ArrowDataFrame) error {
+	if !pw.saved {
+		pw.schema = buildParquetSchema(df)
+		pw.writer = parquet.NewWriter(pw.file, pw.schema)
+		pw.saved = true
+	}
+
+	buf := parquet.NewBuffer(pw.schema)
+	numRows, _ := df.Shape()
+	colNames := df.Columns()
+
+	for i := 0; i < numRows; i++ {
+		row := make(map[string]any, len(colNames))
+		for _, name := range colNames {
+			s := df.Col(name)
+			if s.IsNull(i) {
+				row[name] = nil
+			} else {
+				switch s.Dtype() {
+				case core.BOOL:
+					row[name] = s.Bool(i)
+				case core.FLOAT32, core.FLOAT64:
+					row[name] = s.Float(i)
+				case core.STRING:
+					row[name] = s.String(i)
+				default:
+					row[name] = s.Int(i)
+				}
+			}
+		}
+		if err := buf.Write(row); err != nil {
+			return fmt.Errorf("write parquet buffer: %w", err)
+		}
+	}
+
+	if _, err := pw.writer.WriteRowGroup(buf); err != nil {
+		return fmt.Errorf("write parquet row group: %w", err)
+	}
+	return nil
+}
+
+// Close finalizes and closes the Parquet file.
+func (pw *ParquetWriter) Close() error {
+	if pw.writer != nil {
+		if err := pw.writer.Close(); err != nil {
+			return err
+		}
+	}
+	return pw.file.Close()
+}
+
 // WriteParquetFile writes a DataFrame to a Parquet file.
 func WriteParquetFile(df *arrow.ArrowDataFrame, path string) error {
 	f, err := os.Create(path)
