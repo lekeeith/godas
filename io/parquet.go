@@ -188,7 +188,7 @@ func inferParquetType(values []parquet.Value) core.DType {
 }
 
 // ParquetWriter writes DataFrame chunks to a Parquet file incrementally.
-// Use with ForEach for streaming CSV → Parquet conversion (memory = O(chunkSize)).
+// Use with ForEach for streaming CSV �?Parquet conversion (memory = O(chunkSize)).
 type ParquetWriter struct {
 	file    *os.File
 	writer  *parquet.Writer
@@ -231,10 +231,11 @@ func (pw *ParquetWriter) WriteChunk(df *arrow.ArrowDataFrame) error {
 					row[name] = s.Bool(i)
 				case core.FLOAT32, core.FLOAT64:
 					row[name] = s.Float(i)
-				case core.STRING:
-					row[name] = s.String(i)
-				default:
+				case core.INT8, core.INT16, core.INT32, core.INT64,
+					core.UINT8, core.UINT16, core.UINT32, core.UINT64:
 					row[name] = s.Int(i)
+				default:
+					row[name] = s.String(i)
 				}
 			}
 		}
@@ -286,10 +287,11 @@ func WriteParquetFile(df *arrow.ArrowDataFrame, path string) error {
 					row[name] = s.Bool(i)
 				case core.FLOAT32, core.FLOAT64:
 					row[name] = s.Float(i)
-				case core.STRING:
-					row[name] = s.String(i)
-				default:
+				case core.INT8, core.INT16, core.INT32, core.INT64,
+					core.UINT8, core.UINT16, core.UINT32, core.UINT64:
 					row[name] = s.Int(i)
+				default:
+					row[name] = s.String(i)
 				}
 			}
 		}
