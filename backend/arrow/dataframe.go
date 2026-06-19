@@ -217,15 +217,52 @@ func (df *ArrowDataFrame) Take(indices []int) core.DataFrame {
 }
 
 func (df *ArrowDataFrame) Info() string {
-	var b strings.Builder
 	rows, cols := df.Shape()
-	fmt.Fprintf(&b, "DataFrame: %d rows x %d columns\n", rows, cols)
-	fmt.Fprintf(&b, "\n%-15s %-10s %-10s\n", "Column", "DType", "Non-Null")
-	fmt.Fprintf(&b, "%s\n", strings.Repeat("-", 35))
-	for _, c := range df.columns {
-		nn := c.Len() - c.NullCount()
-		fmt.Fprintf(&b, "%-15s %-10s %-10d\n", c.Name(), c.Dtype(), nn)
+
+	// Collect column info
+	colNames := make([]string, len(df.columns))
+	dtypes := make([]string, len(df.columns))
+	nonNulls := make([]string, len(df.columns))
+	for i, c := range df.columns {
+		colNames[i] = c.Name()
+		dtypes[i] = c.Dtype().String()
+		nonNulls[i] = fmt.Sprintf("%d", c.Len()-c.NullCount())
 	}
+
+	// Calculate column widths
+	w0 := 6 // "Column"
+	w1 := 6 // "DType"
+	w2 := 8 // "Non-Null"
+	for i := range colNames {
+		if w := len(colNames[i]); w > w0 {
+			w0 = w
+		}
+		if w := len(dtypes[i]); w > w1 {
+			w1 = w
+		}
+		if w := len(nonNulls[i]); w > w2 {
+			w2 = w
+		}
+	}
+	w0 += 2
+	w1 += 2
+	w2 += 2
+
+	sep := "├" + strings.Repeat("─", w0+2) + "┼" + strings.Repeat("─", w1+2) + "┼" + strings.Repeat("─", w2+2) + "┤"
+	top := "┌" + strings.Repeat("─", w0+2) + "┬" + strings.Repeat("─", w1+2) + "┬" + strings.Repeat("─", w2+2) + "┐"
+	bot := "└" + strings.Repeat("─", w0+2) + "┴" + strings.Repeat("─", w1+2) + "┴" + strings.Repeat("─", w2+2) + "┘"
+
+	var b strings.Builder
+	b.WriteString(top + "\n")
+	// Header
+	b.WriteString("│ " + padRight("Column", w0) + " │ " + padRight("DType", w1) + " │ " + padRight("Non-Null", w2) + " │\n")
+	b.WriteString(sep + "\n")
+	// Rows
+	for i := range colNames {
+		b.WriteString("│ " + padRight(colNames[i], w0) + " │ " + padRight(dtypes[i], w1) + " │ " + padRight(nonNulls[i], w2) + " │\n")
+	}
+	b.WriteString(bot + "\n")
+	b.WriteString(fmt.Sprintf("%d rows × %d columns", rows, cols))
 	return b.String()
 }
 
@@ -537,6 +574,11 @@ func padRight(s string, width int) string {
 // padLeft pads a string to the given display width with spaces on the left.
 func padLeft(s string, width int) string {
 	return strings.Repeat(" ", width-strWidth(s)) + s
+}
+
+// String implements fmt.Stringer, so fmt.Println(df) automatically uses Fmt().
+func (df *ArrowDataFrame) String() string {
+	return df.Fmt()
 }
 
 // Fmt returns a formatted table string.
