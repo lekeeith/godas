@@ -17,3 +17,5 @@ godans
 # OMC state (not part of the project)
 .omc/
 .claude
+
+test_data

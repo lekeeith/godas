@@ -245,7 +245,7 @@ func (s *ArrowSeries) reindex(positions []int) core.Index {
 	}
 }
 
-// String returns a human-readable representation of the series.
+// GoString returns a human-readable representation of the series.
 func (s *ArrowSeries) GoString() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Series[%s] (%s) len=%d\n", s.name, s.Dtype(), s.Len())
@@ -265,5 +265,133 @@ func (s *ArrowSeries) GoString() string {
 			}
 		}
 	}
+	return b.String()
+}
+
+// Fmt returns a formatted table string.
+// If elements ≤ 20, shows all; otherwise shows top 10 + bottom 3.
+func (s *ArrowSeries) Fmt() string {
+	total := s.Len()
+	if total <= 20 {
+		return s.Display(total, 0)
+	}
+	return s.Display(10, 3)
+}
+
+// Display returns a formatted table string showing top elements and bottom elements.
+func (s *ArrowSeries) Display(top, bottom int) string {
+	if top <= 0 {
+		top = 5
+	}
+	if bottom <= 0 {
+		bottom = 5
+	}
+
+	total := s.Len()
+	showTop := top
+	showBottom := bottom
+	truncated := total > showTop+showBottom
+	if showTop > total {
+		showTop = total
+		showBottom = 0
+		truncated = false
+	} else if showTop+showBottom > total {
+		showBottom = total - showTop
+		truncated = false
+	}
+
+	// Index column width
+	idxW := strWidth(fmt.Sprintf("%d", total-1))
+	if idxW < 3 {
+		idxW = 3
+	}
+
+	// Value column width
+	const maxValW = 30
+	valW := strWidth(s.name)
+	if valW < 4 {
+		valW = 4
+	}
+	checkRows := func(start, end int) {
+		for i := start; i < end; i++ {
+			if s.IsNull(i) {
+				continue
+			}
+			var v string
+			switch s.arr.(type) {
+			case *array.Boolean:
+				v = fmt.Sprintf("%v", s.Bool(i))
+			case *array.Float32, *array.Float64:
+				v = fmt.Sprintf("%g", s.Float(i))
+			case *array.String:
+				v = s.String(i)
+			default:
+				v = fmt.Sprintf("%d", s.Int(i))
+			}
+			if vw := strWidth(v); vw > valW {
+				valW = vw
+			}
+		}
+	}
+	checkRows(0, showTop)
+	if truncated && showBottom > 0 {
+		checkRows(total-showBottom, total)
+	}
+
+	// Fit within terminal width
+	maxW := terminalWidth()
+	needW := idxW + valW + 7 // "│ " + idx + " │ " + val + " │"
+	if needW > maxW {
+		valW = maxW - idxW - 7
+		if valW < 4 {
+			valW = 4
+		}
+	}
+
+	formatVal := func(i int) string {
+		if s.IsNull(i) {
+			return ""
+		}
+		switch s.arr.(type) {
+		case *array.Boolean:
+			return fmt.Sprintf("%v", s.Bool(i))
+		case *array.Float32, *array.Float64:
+			return fmt.Sprintf("%g", s.Float(i))
+		case *array.String:
+			return s.String(i)
+		default:
+			return fmt.Sprintf("%d", s.Int(i))
+		}
+	}
+
+	var b strings.Builder
+
+	// Header
+	b.WriteString("┌" + strings.Repeat("─", idxW+2) + "┬─" + strings.Repeat("─", valW) + "─┐\n")
+	b.WriteString("│ " + padLeft("", idxW) + " │ " + padRight(truncate(s.name, valW), valW) + " │\n")
+	b.WriteString("├" + strings.Repeat("─", idxW+2) + "┼─" + strings.Repeat("·", valW) + "─┤\n")
+
+	writeRow := func(i int) {
+		v := truncate(formatVal(i), valW)
+		b.WriteString("│ " + padLeft(fmt.Sprintf("%d", i), idxW) + " │ " + padRight(v, valW) + " │\n")
+	}
+
+	for i := 0; i < showTop; i++ {
+		writeRow(i)
+	}
+
+	if truncated && showBottom > 0 {
+		b.WriteString("│ " + padLeft("...", idxW) + " │ " + padRight("...", valW) + " │\n")
+		for i := total - showBottom; i < total; i++ {
+			writeRow(i)
+		}
+	}
+
+	b.WriteString("└" + strings.Repeat("─", idxW+2) + "┴─" + strings.Repeat("─", valW) + "─┘\n")
+	b.WriteString(fmt.Sprintf("%s: %d elements", s.name, total))
+	if truncated {
+		b.WriteString(fmt.Sprintf(" (showing %d+%d of %d)", showTop, showBottom, total))
+	}
+
 	return b.String()
 }

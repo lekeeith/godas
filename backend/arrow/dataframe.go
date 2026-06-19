@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/apache/arrow/go/v18/arrow/array"
@@ -438,6 +439,283 @@ func (df *ArrowDataFrame) Agg(groupCols []string, aggs map[string]core.AggFunc) 
 	}
 
 	return NewDataFrame(resultSeries...)
+}
+
+// terminalWidth returns the display width of the terminal.
+// Checks GODAS_WIDTH env, then COLUMNS env, defaults to 120.
+func terminalWidth() int {
+	if v := os.Getenv("GODAS_WIDTH"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	if v := os.Getenv("COLUMNS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 120
+}
+
+// runeWidth returns the display width of a rune (CJK = 2, others = 1).
+func runeWidth(r rune) int {
+	if r >= 0x1100 && (r <= 0x115f || r == 0x2329 || r == 0x232a ||
+		(r >= 0x2e80 && r <= 0x303e) || (r >= 0x3040 && r <= 0x33bf) ||
+		(r >= 0x3400 && r <= 0x4dbf) || (r >= 0x4e00 && r <= 0xa4cf) ||
+		(r >= 0xa960 && r <= 0xa97c) || (r >= 0xac00 && r <= 0xd7a3) ||
+		(r >= 0xf900 && r <= 0xfaff) || (r >= 0xfe10 && r <= 0xfe19) ||
+		(r >= 0xfe30 && r <= 0xfe6b) || (r >= 0xff01 && r <= 0xff60) ||
+		(r >= 0xffe0 && r <= 0xffe6) || (r >= 0x20000 && r <= 0x2fffd) ||
+		(r >= 0x30000 && r <= 0x3fffd)) {
+		return 2
+	}
+	return 1
+}
+
+// strWidth returns the display width of a string.
+func strWidth(s string) int {
+	w := 0
+	for _, r := range s {
+		w += runeWidth(r)
+	}
+	return w
+}
+
+// truncate truncates a string to fit within maxW display columns, appending "..." if truncated.
+func truncate(s string, maxW int) string {
+	if strWidth(s) <= maxW {
+		return s
+	}
+	w := 0
+	var b strings.Builder
+	for _, r := range s {
+		rw := runeWidth(r)
+		if w+rw+3 > maxW { // reserve 3 for "..."
+			break
+		}
+		b.WriteRune(r)
+		w += rw
+	}
+	b.WriteString("...")
+	return b.String()
+}
+
+// padRight pads a string to the given display width with spaces on the right.
+func padRight(s string, width int) string {
+	return s + strings.Repeat(" ", width-strWidth(s))
+}
+
+// padLeft pads a string to the given display width with spaces on the left.
+func padLeft(s string, width int) string {
+	return strings.Repeat(" ", width-strWidth(s)) + s
+}
+
+// Fmt returns a formatted table string.
+// If rows ≤ 20, shows all; otherwise shows top 10 + bottom 3.
+func (df *ArrowDataFrame) Fmt() string {
+	total := df.Len()
+	if total <= 20 {
+		return df.Display(total, 0)
+	}
+	return df.Display(10, 3)
+}
+
+// Display returns a formatted table string showing top rows and bottom rows.
+// Columns are fitted to the terminal width; hidden columns are indicated by "... (+N cols)".
+func (df *ArrowDataFrame) Display(top, bottom int) string {
+	if top <= 0 {
+		top = 5
+	}
+	if bottom <= 0 {
+		bottom = 5
+	}
+
+	rows, numCols := df.Shape()
+	if numCols == 0 {
+		return fmt.Sprintf("DataFrame (empty): %d rows x 0 columns", rows)
+	}
+
+	total := rows
+	showTop := top
+	showBottom := bottom
+	truncated := total > showTop+showBottom
+	if showTop > total {
+		showTop = total
+		showBottom = 0
+		truncated = false
+	} else if showTop+showBottom > total {
+		showBottom = total - showTop
+		truncated = false
+	}
+
+	// Index column width
+	idxW := strWidth(fmt.Sprintf("%d", total-1))
+	if idxW < 3 {
+		idxW = 3
+	}
+
+	// Calculate each column's display width
+	const maxColW = 30
+	colW := make([]int, numCols)
+	for j, c := range df.columns {
+		w := strWidth(c.Name())
+		if w < 4 {
+			w = 4
+		}
+		checkRows := func(start, end int) {
+			for i := start; i < end; i++ {
+				if c.IsNull(i) {
+					continue
+				}
+				var val string
+				switch c.Dtype() {
+				case core.BOOL:
+					val = fmt.Sprintf("%v", c.Bool(i))
+				case core.FLOAT32, core.FLOAT64:
+					val = fmt.Sprintf("%g", c.Float(i))
+				default:
+					val = c.String(i)
+				}
+				if vw := strWidth(val); vw > w {
+					w = vw
+				}
+			}
+		}
+		checkRows(0, showTop)
+		if truncated && showBottom > 0 {
+			checkRows(total-showBottom, total)
+		}
+		if w > maxColW {
+			w = maxColW
+		}
+		colW[j] = w
+	}
+
+	// Fit columns within terminal width
+	maxW := terminalWidth()
+	usedW := idxW + 6 // "│ " + idx + " │ " + trailing "│"
+	visibleCols := 0
+	for j := range df.columns {
+		colNeed := colW[j] + 3 // " " + content + " │"
+		if visibleCols < numCols-1 {
+			colNeed += 6 // reserve for " ... (+N cols) │"
+		}
+		if usedW+colNeed > maxW && visibleCols > 0 {
+			break
+		}
+		usedW += colW[j] + 3
+		visibleCols++
+	}
+	if visibleCols == 0 {
+		visibleCols = 1
+	}
+	hiddenCols := numCols - visibleCols
+
+	// Helper to format cell value
+	formatCell := func(c *ArrowSeries, i int) string {
+		if c.IsNull(i) {
+			return ""
+		}
+		switch c.Dtype() {
+		case core.BOOL:
+			return fmt.Sprintf("%v", c.Bool(i))
+		case core.FLOAT32, core.FLOAT64:
+			return fmt.Sprintf("%g", c.Float(i))
+		default:
+			return c.String(i)
+		}
+	}
+
+	var b strings.Builder
+
+	// Top border
+	b.WriteString("┌" + strings.Repeat("─", idxW+2))
+	for j := 0; j < visibleCols; j++ {
+		b.WriteString("┬─" + strings.Repeat("─", colW[j]) + "─")
+	}
+	if hiddenCols > 0 {
+		b.WriteString("┬─" + strings.Repeat("─", 12) + "─")
+	}
+	b.WriteString("┐\n")
+
+	// Header row (column names)
+	b.WriteString("│ " + padLeft("", idxW) + " │")
+	for j := 0; j < visibleCols; j++ {
+		b.WriteString(" " + padRight(truncate(df.columns[j].Name(), colW[j]), colW[j]) + " │")
+	}
+	if hiddenCols > 0 {
+		label := fmt.Sprintf("...(+%d)", hiddenCols)
+		b.WriteString(" " + padRight(label, 12) + " │")
+	}
+	b.WriteString("\n")
+
+	// Separator after header
+	b.WriteString("├" + strings.Repeat("─", idxW+2))
+	for j := 0; j < visibleCols; j++ {
+		b.WriteString("┼─" + strings.Repeat("·", colW[j]) + "─")
+	}
+	if hiddenCols > 0 {
+		b.WriteString("┼─" + strings.Repeat("·", 12) + "─")
+	}
+	b.WriteString("┤\n")
+
+	// Write a data row
+	writeRow := func(i int) {
+		b.WriteString("│ " + padLeft(fmt.Sprintf("%d", i), idxW) + " │")
+		for j := 0; j < visibleCols; j++ {
+			val := truncate(formatCell(df.columns[j], i), colW[j])
+			b.WriteString(" " + padRight(val, colW[j]) + " │")
+		}
+		if hiddenCols > 0 {
+			b.WriteString(" " + padRight("···", 12) + " │")
+		}
+		b.WriteString("\n")
+	}
+
+	// Top rows
+	for i := 0; i < showTop; i++ {
+		writeRow(i)
+	}
+
+	// Middle ellipsis
+	if truncated && showBottom > 0 {
+		b.WriteString("│ " + padLeft("...", idxW) + " │")
+		for j := 0; j < visibleCols; j++ {
+			b.WriteString(" " + padRight("...", colW[j]) + " │")
+		}
+		if hiddenCols > 0 {
+			b.WriteString(" " + padRight("...", 12) + " │")
+		}
+		b.WriteString("\n")
+	}
+
+	// Bottom rows
+	if truncated && showBottom > 0 {
+		for i := total - showBottom; i < total; i++ {
+			writeRow(i)
+		}
+	}
+
+	// Bottom border
+	b.WriteString("└" + strings.Repeat("─", idxW+2))
+	for j := 0; j < visibleCols; j++ {
+		b.WriteString("┴─" + strings.Repeat("─", colW[j]) + "─")
+	}
+	if hiddenCols > 0 {
+		b.WriteString("┴─" + strings.Repeat("─", 12) + "─")
+	}
+	b.WriteString("┘\n")
+
+	// Summary
+	b.WriteString(fmt.Sprintf("%d rows × %d columns", rows, numCols))
+	if truncated {
+		b.WriteString(fmt.Sprintf(" (showing %d+%d of %d)", showTop, showBottom, total))
+	}
+	if hiddenCols > 0 {
+		b.WriteString(fmt.Sprintf(" (showing %d of %d columns)", visibleCols, numCols))
+	}
+
+	return b.String()
 }
 
 func (df *ArrowDataFrame) ToCSV() string {

@@ -46,4 +46,10 @@ type Series interface {
 	Copy() Series
 	// SetName returns a new series with the given name.
 	SetName(name string) Series
+
+	// Display
+	// Fmt returns a formatted table string with default element count (top 5 + bottom 5).
+	Fmt() string
+	// Display returns a formatted table string showing top elements and bottom elements.
+	Display(top, bottom int) string
 }

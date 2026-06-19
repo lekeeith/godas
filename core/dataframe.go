@@ -72,4 +72,10 @@ type DataFrame interface {
 	// I/O
 	// ToCSV writes the DataFrame to a CSV string.
 	ToCSV() string
+
+	// Display
+	// Fmt returns a formatted table string with default row count (top 5 + bottom 5).
+	Fmt() string
+	// Display returns a formatted table string showing top rows and bottom rows.
+	Display(top, bottom int) string
 }
